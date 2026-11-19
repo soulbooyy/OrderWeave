@@ -21,7 +21,9 @@ TAU_RETAIL_DIR = TAU_DATA / "tau2" / "domains" / "retail"
 TAU_TASKS = TAU_RETAIL_DIR / "tasks.json"
 SEED_PATH = _path("HARNESS_SEED_PATH", TAU_RETAIL_DIR / "db.json")
 POLICY_PATH = _path("HARNESS_POLICY_PATH", TAU_RETAIL_DIR / "policy.md")
-TAU_PYTHON = _path("HARNESS_TAU_PYTHON", ROOT / ".venv-tau" / "Scripts" / "python.exe")
+# Preserve the virtualenv launcher path: resolving a POSIX symlink selects the base interpreter.
+_tau_launcher = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+TAU_PYTHON = Path(os.getenv("HARNESS_TAU_PYTHON", "").strip() or ROOT / ".venv-tau" / _tau_launcher).expanduser().absolute()
 USER_WORKER = ROOT / "evaluation" / "tau_user_worker.py"
 EVAL_WORKER = ROOT / "evaluation" / "tau_eval_worker.py"
 DATASETS = _path("HARNESS_DATASETS", ROOT / "evaluation" / "data" / "harness")
