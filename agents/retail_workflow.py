@@ -166,7 +166,11 @@ class RetailWorkflow:
             ("from_role", "to_role", "source_turn", "target_turn")})
         started = time.perf_counter()
         try:
-            response = await self.service.agent.orchestrator.execute_role(req, AgentType(role), allow_missing_fallback=False)
+            failed = call.get("failed_response")
+            response = await self.service.agent.orchestrator.execute_role(
+                req, AgentType(role), allow_missing_fallback=False,
+                assigned_role=failed.agent_type if failed is not None else None,
+            )
             call["role_response"] = response
             outcome = role_outcome(req, response)
             call["previous_role_result"] = outcome

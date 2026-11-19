@@ -433,6 +433,7 @@ class RetailRuntimeConfig:
     # 会话请求清单：每轮抽取用户提出的写操作请求，进度由业务事件推出（需 compiled 上下文）。
     # 小样本漏做写操作减半、安全不退步，成本约增一成半，默认开启。
     request_plan: bool = True
+    routing_mode: str = "keyword"
 
     @classmethod
     def from_env(cls) -> "RetailRuntimeConfig":
@@ -560,6 +561,7 @@ class RetailRuntimeConfig:
             skill_mode=_env_text("RETAIL_SKILL_MODE", "on_demand").lower(),
             task_facts=_env_bool("RETAIL_TASK_FACTS", False),
             publish_revision=_env_bool("RETAIL_PUBLISH_REVISION", True),
+            routing_mode=_env_text("RETAIL_ROUTING_MODE", "keyword"),
             request_plan=_env_bool("RETAIL_REQUEST_PLAN", True),
             context_budget_tokens=max(2000, int(_env_text("RETAIL_CONTEXT_BUDGET_TOKENS", "32000"))),
             enable_memory=_env_bool("RETAIL_ENABLE_MEMORY", True),
@@ -944,6 +946,7 @@ def _build_retail_runtime(config: RetailRuntimeConfig, encoder) -> RetailRuntime
                 "escalation": RetailEscalationAgent,
             },
             retail_support_enabled=config.support_enabled,
+            routing_mode=config.routing_mode,
             retail_semantic_router=(RetailSemanticRouter(config.semantic_model_path or DEFAULT_MODEL,
                                                          encoder=encoder, owns_encoder=encoder is None)
                                     if config.semantic_routing and language == "zh" else None),

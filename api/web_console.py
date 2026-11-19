@@ -402,7 +402,8 @@ async def build_session_runtime(folder: Path, mode: str, language: str) -> Any:
         workflow_mode="langgraph", checkpoint_path=folder / "checkpoints.sqlite",
         semantic_routing=False, ledger_settlement_policy=model["settlement_policy"],
         model_thinking="disabled", context_mode="compiled", skill_mode="on_demand",
-        task_facts=False, publish_revision=True, request_plan=True)
+        task_facts=False, publish_revision=True, request_plan=True,
+        routing_mode=os.getenv("RETAIL_ROUTING_MODE", "keyword"))
     runtime = build_retail_runtime(config)
     await runtime.start()
     return runtime

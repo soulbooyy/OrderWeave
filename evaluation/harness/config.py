@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -66,6 +66,7 @@ class Profile:
     publish_revision: bool = False
     # 会话请求清单（多动作规划核对）。
     request_plan: bool = False
+    routing_mode: str = "keyword"
 
 
 PROFILES = {
@@ -84,6 +85,10 @@ PROFILES = {
     "facts-single": Profile("facts-single", agent_mode="single", context_mode="compiled", skill_mode="on_demand",
                             task_facts=True),
 }
+
+for _mode in ("subintent", "dag"):
+    _name = f"plan-multi-{_mode}"
+    PROFILES[_name] = replace(PROFILES["plan-multi"], name=_name, routing_mode=_mode)
 
 
 def load_env() -> None:

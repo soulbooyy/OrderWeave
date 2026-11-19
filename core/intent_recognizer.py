@@ -77,6 +77,7 @@ class IntentResult:
     raw_intent: Optional[str] = None # 模型原始标签
     recognition_status: str = "ok" # ok、low_confidence、unknown_label、parse_error、request_error
     diagnostics: Dict[str, Any] = field(default_factory=dict)
+    subtasks: Optional[list] = None
 
 
 # LLM 示例与 Embedding 匹配共用的少样本模板。
@@ -135,6 +136,7 @@ def build_intent_prompt(
     history: Optional[List[Dict[str, str]]] = None,
     language: Optional[str] = None,
     retail_mode: bool = False,
+    routing_mode: str = "keyword",
 ) -> str:
     """构造与实际意图请求完全一致的 Prompt，供预算预检复用。"""
     message = _sanitize_text(message)
@@ -157,6 +159,11 @@ def build_intent_prompt(
             "computer troubleshooting are unsupported. "
             "Missing product or identity details do not erase an explicit action or human request."
         )
+    routing_instruction = ""
+    if retail_mode and routing_mode != "keyword":
+        from core.retail_subtasks import extraction_instruction
+
+        routing_instruction = extraction_instruction(routing_mode)
     if not _is_english(language):
         examples = "\n".join(
             f'  消息: "{_sanitize_text(t)}" → 意图: {cat.value}'
@@ -184,7 +191,7 @@ def build_intent_prompt(
 {{"intent": "<意图值>", "confidence": <0-1>, "reasoning": "<一句话说明>"}}
 
 可选意图: {", ".join(c.value for c in candidates)}"""
-        return _sanitize_text(prompt)
+        return _sanitize_text(prompt + routing_instruction)
 
     examples = "\n".join(
         f'  Message: "{_sanitize_text(t)}" -> intent: {cat.value}'
@@ -212,7 +219,7 @@ Return format (JSON only, no other text):
 {{"intent": "<intent value>", "confidence": <0-1>, "reasoning": "<one sentence>"}}
 
 Available intents: {", ".join(c.value for c in candidates)}"""
-    return _sanitize_text(prompt)
+    return _sanitize_text(prompt + routing_instruction)
 
 _SPECIFIC_INTENTS = {
     IntentCategory.ORDER_STATUS,
@@ -348,6 +355,7 @@ class IntentRecognizer:
         self.threshold = confidence_threshold
         self.language  = language
         self.retail_mode = retail_mode
+        self.routing_mode = "keyword"
         # 本地字符 n-gram 向量始终可用。若客户端暴露 embeddings 资源，
         # _embed_text 会优先使用它，否则退回本地向量。
         self._embedding_enabled = True
@@ -432,6 +440,7 @@ class IntentRecognizer:
             raw_intent=llm.get("raw_intent"),
             recognition_status=recognition_status,
             diagnostics=diagnostics,
+            subtasks=llm.get("subtasks") if not (llm_failed or unknown_label) else None,
         )
 
         # 缓存需要上限：达到 1000 条时丢弃最旧的一半。
@@ -464,6 +473,7 @@ class IntentRecognizer:
         prompt = build_intent_prompt(
             message, history, language=getattr(self, "language", None),
             retail_mode=getattr(self, "retail_mode", False),
+            routing_mode=getattr(self, "routing_mode", "keyword"),
         )
 
         last_error: Optional[Exception] = None
@@ -797,6 +807,8 @@ class IntentRecognizer:
         payload = {"message": self._clean_text(message),
                    "retail_mode": bool(getattr(self, "retail_mode", False)),
                    "language": getattr(self, "language", None)}
+        if getattr(self, "routing_mode", "keyword") != "keyword":
+            payload["routing_mode"] = self.routing_mode
         if history:
             payload["history"] = [
                 {

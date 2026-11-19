@@ -36,6 +36,7 @@ from agents.tools import (
 from agents.agent_loop import LoopError, LoopHook, MethodHook, run_tool_loop
 from core.intent_recognizer import IntentCategory, IntentRecognizer, UrgencyLevel
 from core.llm_utils import extract_text_content
+from core.retail_subtasks import Dispatch, MODES, plan_dispatch
 from mcp_tools.retail_domain import WRITE_KINDS
 
 logger = logging.getLogger(__name__)
@@ -199,6 +200,9 @@ class Request:
     loaded_skills: List[str] = field(default_factory=list)
     # 发布前校验：(草稿, 本角色工具轨迹) -> 守卫发现列表；由服务层按当前业务状态提供。
     publish_check: Optional[Any] = None
+    dispatch: Optional[Dispatch] = None
+    dispatch_outcomes: dict = field(default_factory=dict)
+    dispatch_role: Optional[str] = None
 
 
 @dataclass
@@ -233,6 +237,7 @@ class RoutingDecision:
     supporting_agents: List[AgentType] = field(default_factory=list)
     reason: str = ""
     confidence: float = 0.0
+    dispatch: Optional[Dispatch] = None
 
     @property
     def agent_types(self) -> List[AgentType]:
@@ -916,6 +921,7 @@ class AgentOrchestrator:
         retail_role_clients: Optional[Dict[str, Any]] = None,
         retail_support_enabled: bool = False,
         retail_semantic_router: Optional[Any] = None,
+        routing_mode: str = "keyword",
     ):
         if not model:
             raise ValueError("model is required")
@@ -933,6 +939,9 @@ class AgentOrchestrator:
         self._model = model
         self.language = str(language or "zh").lower()
         self.retail_mode = bool(retail_mode)
+        if routing_mode not in MODES:
+            raise ValueError(f"RETAIL_ROUTING_MODE must be one of {MODES}")
+        self.routing_mode = routing_mode if retail_mode else "keyword"
         self.retail_support_enabled = bool(retail_support_enabled and retail_mode)
         self._retail_semantic_router = retail_semantic_router if retail_mode else None
         self.policy_text = policy_text
@@ -950,6 +959,7 @@ class AgentOrchestrator:
             )
         if isinstance(self._intent_recognizer, IntentRecognizer):
             self._intent_recognizer.retail_mode = self.retail_mode
+            self._intent_recognizer.routing_mode = self.routing_mode
         self._skill_manager = None if self.retail_mode else skill_manager
         if composer is not None:
             self._composer = composer
@@ -1116,6 +1126,7 @@ class AgentOrchestrator:
         t0 = time.monotonic()
         retail_mode = bool(getattr(self, "retail_mode", False))
         language = str(getattr(self, "language", "zh"))
+        subtasks = None
         pending_reply = False
         if retail_mode and req.retail_pending:
             from agents.retail_support import analyze_message
@@ -1155,6 +1166,7 @@ class AgentOrchestrator:
                     intent_result = await self._intent_recognizer.recognize(
                         req.message, history=recognition_history
                     )
+                subtasks = getattr(intent_result, "subtasks", None)
                 req.intent  = intent_result.intent
                 req.intent_group = intent_result.intent_group
                 req.urgency = intent_result.urgency
@@ -1210,7 +1222,7 @@ class AgentOrchestrator:
         local_decision = (RoutingDecision(primary_agent=AgentType(local_role), supporting_agents=[],
                                           reason="selective_local_semantic_route", confidence=req.intent_confidence)
                           if local_role and req.urgency != UrgencyLevel.CRITICAL else None)
-        decision = support_decision or local_decision or self._route_decision(req)
+        decision = support_decision or local_decision or self._route_decision(req, subtasks)
         flow_exit_reasons = {
             "support_return_flow_cancelled",
             "support_return_flow_switched_to_troubleshooting",
@@ -1253,6 +1265,14 @@ class AgentOrchestrator:
             )
         if retail_mode:
             req.retail_primary = decision.primary_agent.value
+            req.dispatch = decision.dispatch
+            if decision.dispatch:
+                req.retail_routing["dispatch"] = {
+                    "mode": self.routing_mode,
+                    "roles": {role: [{"id": t.id, "kind": t.kind, "depends_on": list(t.depends_on)} for t in tasks]
+                              for role, tasks in decision.dispatch.roles.items()},
+                    "deferred": [t.id for t in decision.dispatch.deferred],
+                }
         return decision
 
     async def _retail_selective_intent(self, req):
@@ -1615,7 +1635,7 @@ class AgentOrchestrator:
             confidence=0.4,
         )
 
-    def _route_decision(self, req: Request) -> RoutingDecision:
+    def _route_decision(self, req: Request, subtasks=None) -> RoutingDecision:
         """构造结构化路由决策。
 
         先处理紧急和交接请求。随后由领域得分选出主 Agent 和可选的
@@ -1636,6 +1656,18 @@ class AgentOrchestrator:
                 reason=f"意图为 {req.intent.value if req.intent else 'unknown'}，触发升级路由",
                 confidence=max(req.intent_confidence, 0.8),
             )
+
+        mode = getattr(self, "routing_mode", "keyword")
+        fallback = ""
+        if mode != "keyword":
+            try:
+                plan = plan_dispatch(subtasks, req.message, mode)
+                roles = [AgentType(name) for name in plan.roles]
+                if any(not self._pool.get(role) or self._monitor_degraded(role) for role in roles):
+                    raise ValueError("planned_role_unavailable")
+                return RoutingDecision(roles[-1], roles[:-1], f"subtasks:{mode}", req.intent_confidence, plan)
+            except ValueError as exc:
+                fallback = f"{mode}->keyword:{exc}; "
 
         scores = self._domain_scores(req)
         degraded_agents = {
@@ -1678,7 +1710,7 @@ class AgentOrchestrator:
         if getattr(self, "retail_mode", False):
             # 零售对照固定主 Agent 加至多两个只读辅助。
             supporting_agents = supporting_agents[:2]
-        reason = self._routing_reason(req, available_scores, primary_agent, supporting_agents)
+        reason = fallback + self._routing_reason(req, available_scores, primary_agent, supporting_agents)
         if degraded_agents:
             degraded_text = ", ".join(sorted(agent.value for agent in degraded_agents))
             reason += f", monitor_fallback=[{degraded_text}]"
@@ -1866,10 +1898,11 @@ class AgentOrchestrator:
             logger.warning(f"{agent_type.value} 失败，降级到 GeneralAgent")
             fallback = self._best_agent(AgentType.GENERAL)
             if fallback:
-                return self.merge_fallback(response, await fallback.handle(req))
+                recovered = await self.execute_role(req, AgentType.GENERAL, assigned_role=agent_type)
+                return self.merge_fallback(response, recovered)
         return response
 
-    async def execute_role(self, req, agent_type, allow_missing_fallback=True):
+    async def execute_role(self, req, agent_type, allow_missing_fallback=True, *, assigned_role=None):
         """执行一次角色；工作图自行调度降级节点。"""
         agent = self._best_agent(agent_type)
         if agent is None and allow_missing_fallback:
@@ -1881,7 +1914,22 @@ class AgentOrchestrator:
                 success=False,
             )
 
-        return await agent.handle(req)
+        if not req.dispatch:
+            return await agent.handle(req)
+
+        from agents.retail_handoff import role_outcome
+
+        logical_role = (assigned_role or agent_type).value
+        for role in req.dispatch.prerequisite_roles(logical_role):
+            if not req.dispatch_outcomes.get(role, {}).get("success"):
+                raise RuntimeError(f"Unfulfilled dependency: {role} -> {logical_role}")
+        req.dispatch_role = logical_role
+        try:
+            response = await agent.handle(req)
+            req.dispatch_outcomes[logical_role] = role_outcome(req, response)
+            return response
+        finally:
+            req.dispatch_role = None
 
     def should_fallback(self, req, agent_type, response):
         """复用原降级条件，任何工具或待确认状态都禁止跨角色重放。"""
