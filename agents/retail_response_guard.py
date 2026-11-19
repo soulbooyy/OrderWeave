@@ -195,12 +195,70 @@ def _order_clarification(orders: dict[str, Any], english: bool, bound: bool) -> 
     return text
 
 
+def return_lookup_basis(message, traces):
+    """Bind the user's conditional request to one verified catalog variant and order."""
+    orders = {_order_id(m.group()) for m in _ORDER_ID.finditer(message)}
+    if len(orders) != 1 or not re.search(r"\b(if|otherwise|depending|unless)\b|如果|若|否则|取决于", message, re.I):
+        return {}
+    ids = set(re.findall(r"(?<![A-Za-z0-9])\d{6,}(?![A-Za-z0-9])", message))
+    variants = {}
+    for trace in traces:
+        result = trace.get("result") or {}
+        if not _ok(trace):
+            continue
+        args = trace.get("input") or {}
+        if trace.get("tool_name") == "get_item_details":
+            item = result.get("item") or {}
+            key = item.get("item_id")
+            if key in ids and args.get("item_id") == key:
+                variants[key] = item
+        elif trace.get("tool_name") == "get_product_details":
+            product = result.get("product") or {}
+            if product.get("product_id") and product["product_id"] == args.get("product_id"):
+                named = set(re.findall(r"(?:variant|规格)\s*[#:：]?\s*(\d+)", message, re.I))
+                variants.update({k: v for k, v in product.get("variants", {}).items()
+                                 if k in (named or ids) and v.get("item_id") == k})
+    if len(variants) != 1:
+        return {}
+    key, item = variants.popitem()
+    comparisons = re.findall(r"(?:below|under|above|over|less than|more than|at least|at most|低于|高于|不超过|至少)"
+                             r"\s*[$¥￥]?\s*(\d+(?:\.\d+)?)", message, re.I)
+    basis = {"order": orders.pop(), "variant": key, "mentioned": sorted(ids)}
+    if len(set(comparisons)) == 1 and isinstance(item.get("price"), (int, float)):
+        basis.update(price=item["price"], threshold=comparisons[0])
+    elif re.search(r"availab|in stock|out of stock|库存|有货|缺货", message, re.I) and type(item.get("available")) is bool:
+        basis["available"] = item["available"]
+    else:
+        return {}
+    return basis
+
+
+def _selection_note(basis, pending, english):
+    selected = (pending.get("args") or {}).get("item_ids") or pending.get("item_ids") or []
+    if (not basis or pending.get("kind") != "return" or basis["order"] != pending["order_id"]
+            or basis.get("op_id", pending["op_id"]) != pending["op_id"]
+            or not selected or not set(selected) <= set(basis["mentioned"])):
+        return ""
+    key = basis["variant"]
+    if "price" in basis:
+        price, threshold = Decimal(str(basis["price"])), Decimal(basis["threshold"])
+        relation = ("below", "低于") if price < threshold else ("above", "高于") if price > threshold else ("equal to", "等于")
+        fact = (f"Catalog variant {key} costs ${price:.2f}, {relation[0]} your ${threshold:.2f} threshold."
+                if english else f"目录规格 {key} 的价格为 ${price:.2f}，{relation[1]}您设定的 ${threshold:.2f}。")
+    else:
+        stock = ("available", "有货") if basis["available"] else ("unavailable", "缺货")
+        fact = f"Catalog variant {key} is {stock[0]}." if english else f"目录规格 {key} 当前{stock[1]}。"
+    items = ", ".join(selected)
+    return (f"{fact} Under your conditional return request, the item(s) prepared for your review: {items}."
+            if english else f"{fact} 按您的条件，本次供您核对的退货商品编号为 {items}。")
+
+
 def constrain_response(
     text: str, *, traces: list[dict[str, Any]], events: list[dict[str, Any]],
     pending_before: list[dict[str, Any]], pending_after: list[dict[str, Any]],
     turn: int, bound_user_id: str | None, language: str = "zh",
     session_events: list[dict[str, Any]] | None = None,
-    user_order_ids: set[str] | None = None,
+    user_order_ids: set[str] | None = None, return_basis=None,
 ) -> GuardedResponse:
     """输入仅限服务层选出的同会话本轮事实；开放语义仍需独立复核。"""
     started = time.perf_counter()
@@ -461,6 +519,9 @@ def constrain_response(
     for item in pending_after:
         display = item.get("display_text") or ""
         if display and (item in prepared or display in candidate):
+            note = _selection_note(return_basis, item, english)
+            if note:
+                text = note + "\n\n" + text
             text = (text + "\n\n" + display).strip()
     return GuardedResponse(text=text, record={
         "version": "u09.3", "changed": text != candidate,

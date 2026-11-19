@@ -1076,16 +1076,19 @@ class RetailStore:
         return [{"role": role, "content": str(pair[role])[:2000]} for pair in pairs[-2:]
                 for role in ("user", "assistant") if isinstance(pair.get(role), str) and pair[role].strip()]
 
-    def last_response_guard(self, client_user_id: str, conv_id: str) -> Dict[str, Any]:
-        """只读同会话上轮守卫计数；该元数据不进入模型历史或业务授权。"""
+    def last_visible_turn(self, client_user_id: str, conv_id: str) -> Dict[str, Any]:
         with closing(self._connect()) as connection:
             row = connection.execute("SELECT payload_json FROM retail_dialogue WHERE client_user_id=? AND conv_id=?",
                 (client_user_id, conv_id)).fetchone()
         pairs = json.loads(row["payload_json"]) if row else []
-        return {**(pairs[-1].get("response_guard") or {}), "turn": pairs[-1].get("turn")} if pairs else {}
+        return pairs[-1] if pairs else {}
+
+    def last_response_guard(self, client_user_id: str, conv_id: str) -> Dict[str, Any]:
+        last = self.last_visible_turn(client_user_id, conv_id)
+        return {**(last.get("response_guard") or {}), "turn": last.get("turn")} if last else {}
 
     def save_visible_turn(self, client_user_id: str, conv_id: str, turn: int, message: str, reply: str,
-                          *, response_guard: Optional[Dict[str, Any]] = None) -> None:
+                          *, response_guard: Optional[Dict[str, Any]] = None, catalog_steps=None, return_basis=None) -> None:
         """每会话只保留两轮，同一轮重复收口不追加历史。"""
         with self._tx() as connection:
             row = connection.execute("SELECT payload_json FROM retail_dialogue WHERE client_user_id=? AND conv_id=?",
@@ -1095,6 +1098,11 @@ class RetailStore:
             pairs.append({"turn": turn, "user": message[:2000], "assistant": reply[:2000],
                           "response_guard": {key: response_guard[key] for key in ("recovery_signature", "recovery_count")
                                              if response_guard and key in response_guard}})
+            if catalog_steps:
+                pairs[-1]["catalog_steps"] = catalog_steps
+            if return_basis:
+                pairs[-1]["return_basis"] = return_basis
+            pairs.sort(key=lambda pair: pair["turn"])
             connection.execute("INSERT INTO retail_dialogue VALUES (?,?,?) ON CONFLICT(client_user_id,conv_id) DO UPDATE SET payload_json=excluded.payload_json",
                 (client_user_id, conv_id, json.dumps(pairs[-2:], ensure_ascii=False)))
 

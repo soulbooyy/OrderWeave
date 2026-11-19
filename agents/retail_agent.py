@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -33,7 +34,7 @@ from agents.retail_support import (
 )
 from agents.retail_tools import RETAIL_READ_ONLY_TOOLS, retail_tool_scope, retail_tools
 from agents.retail_hooks import single_agent_hooks
-from agents.retail_response_guard import constrain_response
+from agents.retail_response_guard import constrain_response, return_lookup_basis
 from mcp_tools.retail_store import RetailStore, SupportStateError
 from monitor import live_events
 
@@ -616,6 +617,11 @@ class RetailService:
                 "return_flow": (support_record or {}).get("return_flow", {}),
             }, pending_brief),
         )
+        if getattr(getattr(self.agent, "orchestrator", None), "routing_mode", None) == "dag" and bound_user_id and not pending_before:
+            last = self.store.last_visible_turn(client_user_id, conv_id)
+            saved = last.get("catalog_steps") or {}
+            if last.get("turn") == turn - 1 and saved.get("user") == bound_user_id:
+                request.catalog_steps = saved
         if plan is not None:
             from agents.retail_plan import open_goals
 
@@ -749,6 +755,15 @@ class RetailService:
 
         appended = [str(item["op_id"]) for item in prepared
                     if str(item.get("display_text") or "").strip() not in text]
+        return_basis = return_lookup_basis(message, response.tool_traces or [])
+        if not return_basis and pending_after and current_bound_user:
+            last = self.store.last_visible_turn(client_user_id, conv_id)
+            prior = last.get("return_basis") or {}
+            same_op = prior.get("op_id") and any(p["op_id"] == prior["op_id"] for p in pending_after)
+            if (last.get("turn") == turn - 1 and prior.get("user") == current_bound_user
+                    and (same_op or (not prior.get("op_id") and prepared))
+                    and not re.search(r"\b(if|instead|otherwise|unless)\b|改为|如果|否则", message, re.I)):
+                return_basis = prior
         guarded = constrain_response(
             text, traces=list(response.tool_traces or []) + self._order_evidence(
                 client_user_id, conv_id, text, current_bound_user, pending_after),
@@ -757,6 +772,7 @@ class RetailService:
             bound_user_id=current_bound_user,
             session_events=self.store.list_events(client_user_id, conv_id),
             user_order_ids=self._user_order_ids(client_user_id, conv_id, message),
+            return_basis=return_basis,
             language=self.language,
         )
         guarded.record["facts_read_ms"] = round(facts_read_ms, 3)
@@ -874,7 +890,18 @@ class RetailService:
                     memory_error = f"写入记忆失败: {ex}"
                     logger.warning(memory_error)
 
-        self.store.save_visible_turn(client_user_id, conv_id, turn, message, text, response_guard=guarded.record)
+        from core.retail_subtasks import next_catalog_steps
+        catalog_steps = {}
+        if request.dispatch and request.retail_routing.get("dispatch", {}).get("mode") == "dag" and current_bound_user and not pending_after:
+            catalog_steps = next_catalog_steps(request.dispatch, response.tool_traces or [])
+            if catalog_steps:
+                catalog_steps["user"] = current_bound_user
+        if return_basis and current_bound_user:
+            return_basis["user"] = current_bound_user
+            if len(pending_after) == 1:
+                return_basis["op_id"] = pending_after[0]["op_id"]
+        self.store.save_visible_turn(client_user_id, conv_id, turn, message, text, response_guard=guarded.record,
+                                     catalog_steps=catalog_steps, return_basis=return_basis)
         if self.context_engine is not None and context.get("user_content"):
             # 模型看到的是守卫后的最终回复，与用户实际看到的一致。
             self.context_engine.calibrate(client_user_id, conv_id, request.spans or [])

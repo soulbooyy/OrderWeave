@@ -203,6 +203,7 @@ class Request:
     dispatch: Optional[Dispatch] = None
     dispatch_outcomes: dict = field(default_factory=dict)
     dispatch_role: Optional[str] = None
+    catalog_steps: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -1163,6 +1164,12 @@ class AgentOrchestrator:
                             "content": "服务端调度语境，仅供意图消歧，不提供身份或交易授权：" +
                                        json.dumps(req.retail_task, ensure_ascii=False, sort_keys=True),
                         }]
+                    if req.catalog_steps and getattr(self, "routing_mode", "keyword") == "dag":
+                        recognition_history = [*(recognition_history or []), {"role": "system", "content":
+                            "Previous verified order lookup and deferred catalog requests: " + json.dumps(req.catalog_steps, ensure_ascii=False)
+                            + ". If the current user continues one, extract a product_info node quoting this message "
+                            "and put the previous node id in its continues field. Use continues=null for a new request, "
+                            "changed condition or a required fresh order lookup. Never resume a cancelled task."}]
                     intent_result = await self._intent_recognizer.recognize(
                         req.message, history=recognition_history
                     )
@@ -1661,7 +1668,15 @@ class AgentOrchestrator:
         fallback = ""
         if mode != "keyword":
             try:
-                plan = plan_dispatch(subtasks, req.message, mode)
+                previous = req.catalog_steps if mode == "dag" else {}
+                catalog_owner = AgentType.TECHNICAL
+                if previous:
+                    catalog_owner = next((role for role in (AgentType.TECHNICAL, AgentType.GENERAL, AgentType.BILLING)
+                                          if not self._monitor_degraded(role) and
+                                          {"get_product_details", "get_item_details"}.intersection(
+                                              getattr(self._best_agent(role), "retail_allowed_tools", ()))), None)
+                plan = plan_dispatch(subtasks, req.message, mode, previous if catalog_owner else None,
+                                     catalog_owner.value if catalog_owner else "technical")
                 roles = [AgentType(name) for name in plan.roles]
                 if any(not self._pool.get(role) or self._monitor_degraded(role) for role in roles):
                     raise ValueError("planned_role_unavailable")

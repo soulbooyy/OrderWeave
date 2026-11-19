@@ -155,3 +155,50 @@ def test_general_retry_of_a_helper_preserves_assignment_and_read_only_permission
 
     asyncio.run(run())
     assert seen == [(False, "a"), (True, "b")]
+
+
+def test_deferred_lookup_resumes_only_its_verified_order_and_catalog_request():
+    from core.retail_subtasks import next_catalog_steps
+
+    previous = [dict(node("read", "billing_lookup"), quote="receipt #W1234"),
+                dict(node("spec", "product_info", "read"), quote="variant 111222")]
+    graph = plan(previous)
+    trace = {"agent_type": "billing", "tool_name": "get_order_details", "input": {"order_id": "#W1234"},
+             "result_success": True, "result": {"success": True, "order": {"order_id": "#W1234"}}}
+    saved = next_catalog_steps(graph, [trace])
+    assert saved and not next_catalog_steps(graph, [dict(trace, blocked_by_guard=True)])
+    current = [dict(node("read", "billing_lookup"), quote="receipt"),
+               dict(node("spec", "product_info", "read"), quote="check again")]
+    msg = "receipt: check again for variant 111222"
+    assert list(plan_dispatch(current, msg, "dag", saved).roles) == ["technical", "billing"]
+    for other in ["receipt: check again for 333444", msg + " on #W4321"]:
+        assert not plan_dispatch(current, other, "dag", saved).resumed
+    assert not plan_dispatch([current[0], dict(current[1], continues=None)], msg, "dag", saved).resumed
+    assert plan_dispatch([current[0], dict(current[1], continues="spec")],
+                         "receipt: check again", "dag", saved).resumed
+    assert not plan_dispatch(current, msg, "subintent", saved).resumed
+    app = router("dag", current)
+    app._best_agent(AgentType.TECHNICAL).retail_allowed_tools = ()
+    req = Request(msg, "u", "c", intent=IntentCategory.QUERY, catalog_steps=saved)
+    decision = app._route_decision(req, current)
+    assert list(decision.dispatch.roles) == ["general", "billing"]
+
+
+def test_return_lookup_basis_uses_verified_variant_and_matching_pending_card():
+    from agents.retail_response_guard import constrain_response, return_lookup_basis
+
+    msg = "If variant 111222 is below $20.00, return item 333444 on #W1234, otherwise item 555666."
+    trace = {"tool_name": "get_item_details", "input": {"item_id": "111222"}, "result_success": True,
+             "result": {"success": True, "item": {"item_id": "111222", "price": 19.95}}}
+    basis = return_lookup_basis(msg, [trace])
+    assert basis and not return_lookup_basis(msg, [dict(trace, result_success=False)])
+    pending = {"kind": "return", "args": {"item_ids": ["333444"]}, "order_id": "#W1234",
+               "op_id": "op1", "prepared_turn": 3, "status": "prepared", "display_text": "Pending card"}
+    def guard(card):
+        return constrain_response("Refund arrived.", traces=[trace], events=[], pending_before=[],
+                                  pending_after=[card], turn=3, bound_user_id="u", language="en",
+                                  return_basis=basis).text
+    reply = guard(pending)
+    assert "$19.95, below your $20.00" in reply and reply.index("333444") < reply.index("Pending card")
+    assert reply.count("Pending card") == 1 and "Refund arrived" not in reply
+    assert "$19.95" not in guard(dict(pending, order_id="#W9999"))
