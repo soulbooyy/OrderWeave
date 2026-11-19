@@ -295,6 +295,7 @@ uv run python -m api.web_console
 | `RETAIL_PUBLISH_REVISION` | `true` | 发布前校验草稿并修订一次 |
 | `RETAIL_REQUEST_PLAN` | `true` | 会话请求清单（需 `compiled`） |
 | `RETAIL_TASK_FACTS` | `false` | 时序事实账本；无显著收益、成本约 +30% |
+| `RETAIL_ROUTING_MODE` | `keyword` | 零售多角色普通路由。可选 `subintent`（按子意图分工）或 `dag`（使用前置依赖）。离线对照见[评测方法](evaluation/README.md#主辅角色与执行顺序的离线对照) |
 | `RETAIL_ENABLE_MEMORY` | `false` | 需要 Redis、ChromaDB 与本地 MiniLM 缓存 |
 | `RETAIL_ENABLE_KNOWLEDGE` | `false` | 需要自行准备知识库 |
 | `RETAIL_SEMANTIC_ROUTING` | `false` | 需要外部语义工件与 Qwen 编码器 |

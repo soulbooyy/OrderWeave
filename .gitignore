@@ -60,6 +60,7 @@
 /tests/*
 !/tests/conftest.py
 !/tests/test_agents.py
+!/tests/test_retail_dispatch.py
 !/tests/test_core.py
 !/tests/test_memory.py
 !/tests/test_monitor_eval.py
