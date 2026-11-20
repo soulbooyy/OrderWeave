@@ -1,0 +1,10 @@
+{
+  "currency": "CNY",
+  "previous_cumulative_cap": "5.00",
+  "authorized_increase": "5.00",
+  "cumulative_cap": "10.00",
+  "settled_at_freeze": "4.93183652",
+  "unspent_at_freeze": "5.06816348",
+  "step_1_spend": "0.00",
+  "ledger_source": "data/evaluation/cross-role-owner-override/report.md"
+}

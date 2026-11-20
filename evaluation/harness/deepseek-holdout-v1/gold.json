@@ -1,0 +1,354 @@
+[
+  {
+    "key": "H01",
+    "order": "#W1067251",
+    "initial_status": "delivered",
+    "expected_status": "delivered",
+    "nodes": [
+      {
+        "id": "quantity",
+        "kind": "order_lookup",
+        "quote": "Could you check how many items I bought on order #W1067251",
+        "target": "#W1067251",
+        "field": "purchased_item_count",
+        "value": 2,
+        "after": [],
+        "condition": "",
+        "applies": true
+      },
+      {
+        "id": "large",
+        "kind": "product_info",
+        "quote": "look up the size of grill variant 7848293342",
+        "target": "7848293342",
+        "field": "size",
+        "value": "medium",
+        "after": [
+          "quantity"
+        ],
+        "condition": "If the order contains at least three items, look up the size of grill variant 7848293342; otherwise look up the color of earbuds variant 6452271382",
+        "applies": false
+      },
+      {
+        "id": "small",
+        "kind": "product_info",
+        "quote": "look up the color of earbuds variant 6452271382",
+        "target": "6452271382",
+        "field": "color",
+        "value": "blue",
+        "after": [
+          "quantity"
+        ],
+        "condition": "If the order contains at least three items, look up the size of grill variant 7848293342; otherwise look up the color of earbuds variant 6452271382",
+        "applies": true
+      }
+    ],
+    "answers": [
+      "\\b(?:two|2)\\s+(?:purchased\\s+)?items?\\b",
+      "\\bblue\\b"
+    ],
+    "write_args": [],
+    "before_card": [],
+    "allowed_extra_edges": []
+  },
+  {
+    "key": "H02",
+    "order": "#W1166549",
+    "initial_status": "delivered",
+    "expected_status": "delivered",
+    "nodes": [
+      {
+        "id": "quantity",
+        "kind": "order_lookup",
+        "quote": "Please get the number of items recorded on my receipt for #W1166549",
+        "target": "#W1166549",
+        "field": "purchased_item_count",
+        "value": 3,
+        "after": [],
+        "condition": "",
+        "applies": true
+      },
+      {
+        "id": "large",
+        "kind": "product_info",
+        "quote": "find the color of lamp variant 1569765161",
+        "target": "1569765161",
+        "field": "color",
+        "value": "silver",
+        "after": [
+          "quantity"
+        ],
+        "condition": "If the order contains at least three items, find the color of lamp variant 1569765161; otherwise find the color of kettle variant 5268233322",
+        "applies": true
+      },
+      {
+        "id": "small",
+        "kind": "product_info",
+        "quote": "find the color of kettle variant 5268233322",
+        "target": "5268233322",
+        "field": "color",
+        "value": "white",
+        "after": [
+          "quantity"
+        ],
+        "condition": "If the order contains at least three items, find the color of lamp variant 1569765161; otherwise find the color of kettle variant 5268233322",
+        "applies": false
+      }
+    ],
+    "answers": [
+      "\\b(?:three|3)\\s+(?:purchased\\s+)?items?\\b",
+      "\\bsilver\\b"
+    ],
+    "write_args": [],
+    "before_card": [],
+    "allowed_extra_edges": []
+  },
+  {
+    "key": "H03",
+    "order": "#W1473345",
+    "initial_status": "delivered",
+    "expected_status": "delivered",
+    "nodes": [
+      {
+        "id": "catalog",
+        "kind": "product_info",
+        "quote": "get the catalog variant IDs for coffee maker product 7996920482",
+        "target": "7996920482",
+        "field": "variants",
+        "value": [
+          "1323134954",
+          "1349017811",
+          "2115393569",
+          "3020722515",
+          "3039787582",
+          "3062461148",
+          "4821837102",
+          "5952720925",
+          "7211586944",
+          "9862136885"
+        ],
+        "after": [],
+        "condition": "",
+        "applies": true
+      },
+      {
+        "id": "receipt",
+        "kind": "order_lookup",
+        "quote": "use that list to identify the matching purchased item IDs on receipt #W1473345",
+        "target": "#W1473345",
+        "field": "item_ids",
+        "value": [
+          "3020722515"
+        ],
+        "after": [
+          "catalog"
+        ],
+        "condition": "",
+        "applies": true
+      },
+      {
+        "id": "matched",
+        "kind": "product_info",
+        "quote": "look up the color of the matching coffee maker variant",
+        "target": "3020722515",
+        "field": "color",
+        "value": "black",
+        "after": [
+          "receipt"
+        ],
+        "condition": "",
+        "applies": true,
+        "binding": "predecessors"
+      }
+    ],
+    "answers": [
+      "\\b3020722515\\b",
+      "\\bblack\\b"
+    ],
+    "write_args": [],
+    "before_card": [],
+    "allowed_extra_edges": [
+      [
+        "catalog",
+        "matched"
+      ]
+    ]
+  },
+  {
+    "key": "H04",
+    "order": "#W2015099",
+    "initial_status": "delivered",
+    "expected_status": "delivered",
+    "nodes": [
+      {
+        "id": "catalog",
+        "kind": "product_info",
+        "quote": "get the catalog variant IDs for desk lamp product 6817146515",
+        "target": "6817146515",
+        "field": "variants",
+        "value": [
+          "1270145486",
+          "1569765161",
+          "4385534692",
+          "4447749792",
+          "5320792178",
+          "5370728469",
+          "6805564527",
+          "7453605304",
+          "7624783998",
+          "8384507844",
+          "9083642334",
+          "9190635437"
+        ],
+        "after": [],
+        "condition": "",
+        "applies": true
+      },
+      {
+        "id": "receipt",
+        "kind": "order_lookup",
+        "quote": "get the purchased item IDs from receipt #W2015099",
+        "target": "#W2015099",
+        "field": "item_ids",
+        "value": [
+          "3039787582",
+          "1270145486"
+        ],
+        "after": [],
+        "condition": "",
+        "applies": true
+      },
+      {
+        "id": "matched",
+        "kind": "product_info",
+        "quote": "look up the color of the matching desk lamp variant",
+        "target": "1270145486",
+        "field": "color",
+        "value": "white",
+        "after": [
+          "catalog",
+          "receipt"
+        ],
+        "condition": "",
+        "applies": true,
+        "binding": "predecessors"
+      }
+    ],
+    "answers": [
+      "\\b1270145486\\b",
+      "\\bwhite\\b"
+    ],
+    "write_args": [],
+    "before_card": [],
+    "allowed_extra_edges": []
+  },
+  {
+    "key": "H05",
+    "order": "#W1809337",
+    "initial_status": "delivered",
+    "expected_status": "return requested",
+    "nodes": [
+      {
+        "id": "rating",
+        "kind": "product_info",
+        "quote": "check the ventilation level of helmet variant 3339188619",
+        "target": "3339188619",
+        "field": "ventilation",
+        "value": "low",
+        "after": [],
+        "condition": "",
+        "applies": true
+      },
+      {
+        "id": "prepare",
+        "kind": "return_change",
+        "quote": "prepare a return of item 3339188619 from order #W1809337 to paypal_1679017",
+        "target": "#W1809337",
+        "field": "executed",
+        "value": true,
+        "after": [
+          "rating"
+        ],
+        "condition": "If the ventilation level is low, prepare a return of item 3339188619 from order #W1809337 to paypal_1679017; otherwise check the current status of order #W1809337",
+        "applies": true
+      },
+      {
+        "id": "status",
+        "kind": "order_lookup",
+        "quote": "check the current status of order #W1809337",
+        "target": "#W1809337",
+        "field": "status",
+        "value": "delivered",
+        "after": [
+          "rating"
+        ],
+        "condition": "If the ventilation level is low, prepare a return of item 3339188619 from order #W1809337 to paypal_1679017; otherwise check the current status of order #W1809337",
+        "applies": false
+      }
+    ],
+    "answers": [
+      "\\blow\\b",
+      "\\b(?:return requested|return request (?:was |has been )?(?:recorded|submitted))\\b"
+    ],
+    "write_args": [
+      "3339188619",
+      "paypal_1679017"
+    ],
+    "before_card": [
+      "\\blow\\b"
+    ],
+    "allowed_extra_edges": []
+  },
+  {
+    "key": "H06",
+    "order": "#W1355800",
+    "initial_status": "delivered",
+    "expected_status": "delivered",
+    "nodes": [
+      {
+        "id": "rating",
+        "kind": "product_info",
+        "quote": "check the ventilation level of helmet variant 5537798301",
+        "target": "5537798301",
+        "field": "ventilation",
+        "value": "medium",
+        "after": [],
+        "condition": "",
+        "applies": true
+      },
+      {
+        "id": "prepare",
+        "kind": "return_change",
+        "quote": "prepare a return of item 5537798301 from order #W1355800 to credit_card_3566337",
+        "target": "#W1355800",
+        "field": "executed",
+        "value": true,
+        "after": [
+          "rating"
+        ],
+        "condition": "If the ventilation level is low, prepare a return of item 5537798301 from order #W1355800 to credit_card_3566337; otherwise check the current status of order #W1355800",
+        "applies": false
+      },
+      {
+        "id": "status",
+        "kind": "order_lookup",
+        "quote": "check the current status of order #W1355800",
+        "target": "#W1355800",
+        "field": "status",
+        "value": "delivered",
+        "after": [
+          "rating"
+        ],
+        "condition": "If the ventilation level is low, prepare a return of item 5537798301 from order #W1355800 to credit_card_3566337; otherwise check the current status of order #W1355800",
+        "applies": true
+      }
+    ],
+    "answers": [
+      "\\bmedium\\b",
+      "\\bdelivered\\b"
+    ],
+    "write_args": [],
+    "before_card": [],
+    "allowed_extra_edges": []
+  }
+]

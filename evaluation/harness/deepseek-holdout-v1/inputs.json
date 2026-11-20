@@ -1,0 +1,39 @@
+[
+  {
+    "key": "H01",
+    "turns": [
+      "Could you check how many items I bought on order #W1067251? If the order contains at least three items, look up the size of grill variant 7848293342; otherwise look up the color of earbuds variant 6452271382. Tell me the count and the specification for the selected item."
+    ]
+  },
+  {
+    "key": "H02",
+    "turns": [
+      "Please get the number of items recorded on my receipt for #W1166549? If the order contains at least three items, find the color of lamp variant 1569765161; otherwise find the color of kettle variant 5268233322. Tell me the count and the specification for the selected item."
+    ]
+  },
+  {
+    "key": "H03",
+    "turns": [
+      "First get the catalog variant IDs for coffee maker product 7996920482. Next use that list to identify the matching purchased item IDs on receipt #W1473345. Using the resulting item ID, look up the color of the matching coffee maker variant. Please give me its item ID and color."
+    ]
+  },
+  {
+    "key": "H04",
+    "turns": [
+      "I need two records: get the catalog variant IDs for desk lamp product 6817146515, and separately get the purchased item IDs from receipt #W2015099. Once both lists are available, look up the color of the matching desk lamp variant. Please give me its item ID and color."
+    ]
+  },
+  {
+    "key": "H05",
+    "turns": [
+      "Please check the ventilation level of helmet variant 3339188619. If the ventilation level is low, prepare a return of item 3339188619 from order #W1809337 to paypal_1679017; otherwise check the current status of order #W1809337. Tell me the rating and why that selects the next step. Show me any return details and wait for my confirmation before submitting.",
+      "Yes, please submit the return exactly as shown."
+    ]
+  },
+  {
+    "key": "H06",
+    "turns": [
+      "Please check the ventilation level of helmet variant 5537798301. If the ventilation level is low, prepare a return of item 5537798301 from order #W1355800 to credit_card_3566337; otherwise check the current status of order #W1355800. Tell me the rating and why that selects the next step. Show me any return details and wait for my confirmation before submitting."
+    ]
+  }
+]

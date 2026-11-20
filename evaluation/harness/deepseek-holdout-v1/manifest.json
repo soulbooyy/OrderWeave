@@ -1,0 +1,33 @@
+{
+  "version": "deepseek-holdout-v1",
+  "scoring_commit": "91fb976",
+  "seed_sha256": "413a65160adbdb5fde0ffc0015c49b6d70250b10c18128de169b597af7766765",
+  "denominators": {
+    "cases": 6,
+    "turns": 7,
+    "planned_nodes": 18,
+    "planned_edges": 12,
+    "conditioned_nodes": 8,
+    "applicable_nodes": 14,
+    "applicable_edges": 8,
+    "mandatory_waits": 1
+  },
+  "sha256": {
+    "evaluation/harness/deepseek-holdout-v1/inputs.json": "c9dac944bbd00ae201adcbbde20485bdb0ee55ff9ab83d517d2cb777e1e0b871",
+    "evaluation/harness/deepseek-holdout-v1/gold.json": "bd0cea3ab6f51a6122a501eda675ca9b3409d83f6c8957f9833e14b3e4b106e4",
+    "evaluation/harness/deepseek-holdout-v1/budget.json": "85d714b220bc28ed606c47f6172a1ccd1248b074ee2e43335a5fbf4be1311441",
+    "evaluation/harness/deepseek-holdout-v1/PROTOCOL.zh-CN.md": "fe060d6c19b3cb800ae5b640c77fdd0b6200dfa85e61e48995f648ee809b1ae3",
+    "evaluation/harness/deepseek_holdout.py": "bb6a136dfd3f303ecb5c3350a13e493fde47de4e14af1a3e634467f708c329ab",
+    "evaluation/harness/dag_alignment.py": "d6571cb674216cecf65f7aa74c9c9c4d938bd6195782e417387a43dcaae064eb",
+    "evaluation/harness/dag_scoring.py": "c05ffdfad6f67ece1f68b7d18b84c2deb9ac736ed095076d719643e9f5a4af96",
+    "evaluation/harness/dag_cases.py": "c74b55fe01981f6533768c9cf236bb2cddb77538bf7842cdb17a49097e8ad21a",
+    "evaluation/harness/dag_ablation.py": "824f5d6d4140f825e62bb1c0a693e2f7fcdf768c093c5b3ddfd46b9514a42c6f"
+  },
+  "runtime_reference": {
+    "commit": "1ca6134",
+    "contract_files": {
+      "core/retail_dag.py": "deb6c3ce60da00ef246b57e44652cd9f8a2246ee93444379706e5890dc54b02a",
+      "core/retail_subtasks.py": "f7ccd42e2a1df5d0559f3694e89d260c68fcc986f1a625afda117f2ba0cee6d8"
+    }
+  }
+}
