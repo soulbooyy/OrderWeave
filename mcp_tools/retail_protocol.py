@@ -32,6 +32,7 @@ class RetailContext:
     turn: int
     message: str
     language: str
+    dag_ticket: tuple | None = None
 
 
 def build_context_meta(
@@ -41,6 +42,7 @@ def build_context_meta(
     turn: int,
     message: str,
     language: str,
+    *, dag_ticket=None,
 ) -> dict[str, Any]:
     """由主程序构造可信 _meta；字段不进入模型可填写的工具 Schema。"""
     return {
@@ -50,6 +52,7 @@ def build_context_meta(
         META_TURN: int(turn),
         META_MESSAGE: message,
         META_LANGUAGE: language,
+        **({"dag_ticket": list(dag_ticket)} if dag_ticket is not None else {}),
     }
 
 
@@ -118,6 +121,12 @@ def parse_context_meta(
             "_meta language does not match the tool server configuration",
         )
 
+    ticket = data.get("dag_ticket")
+    if "dag_ticket" in data and not (isinstance(ticket, list) and len(ticket) == 4
+            and all(isinstance(v, str) and v for v in ticket[:2])
+            and all(type(v) is int and v > 0 for v in ticket[2:]) and ticket[3] == turn):
+        fail("DAG 任务凭据无效", "Invalid DAG task ticket")
+
     return RetailContext(
         client_user_id=values[META_CLIENT_USER_ID],
         conv_id=values[META_CONV_ID],
@@ -125,4 +134,5 @@ def parse_context_meta(
         turn=turn,
         message=values[META_MESSAGE],
         language=language,
+        dag_ticket=tuple(ticket) if ticket else None,
     )

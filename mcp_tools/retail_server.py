@@ -164,6 +164,27 @@ async def _call_tool(
         ),
     )
 
+    if context.dag_ticket:
+        plan_id, task_id, revision, turn = context.dag_ticket
+        for state in store.open_dags(request.user_id, request.conv_id):
+            if state.plan.id != plan_id or state.revision != revision:
+                continue
+            run = state.runs.get(task_id)
+            if (not run or run.status.value != "running" or run.turn != turn
+                    or not request.retail_user_id or state.bound_user != request.retail_user_id):
+                break
+            task = next(node for node in state.plan.nodes if node.id == task_id)
+            from agents.retail_tools import TASK_TOOLS
+            from mcp_tools.retail_domain import WRITE_KINDS
+            if name not in WRITE_KINDS or name not in TASK_TOOLS[task.kind]:
+                break
+            target, _ = state.target(task)
+            request.dag_assignment = {"kind": task.kind, "target": target, "operation": state.operation}
+            request.dag_ticket = context.dag_ticket
+            break
+        if not request.dag_assignment:
+            raise _error(types.INVALID_PARAMS, "Invalid or stale DAG write claim")
+
     try:
         result = spec.handler(request, args)
         if inspect.isawaitable(result):

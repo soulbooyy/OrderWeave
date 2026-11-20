@@ -14,6 +14,22 @@ from core.retail_subtasks import OWNERS, PRIVATE, WRITES
 from mcp_tools.retail_domain import WRITE_KINDS
 
 
+def task_context(assignment, req):
+    packet = {"assignment": assignment}
+    if assignment["kind"] in PRIVATE:
+        packet["session"] = {"identity_verified": bool(req.retail_user_id)}
+        packet["instruction"] = ("Use the current server-verified session for the assigned task. "
+                                 "Obtain the requested evidence with the permitted tools.")
+    if assignment["kind"] in WRITES:
+        packet["session"]["write_phase"] = ("confirmed_operation" if assignment.get("operation")
+                                             else "prepare_for_confirmation")
+        if assignment.get("operation"):
+            packet["instruction"] += " Submit exactly the displayed operation using its recorded arguments."
+        else:
+            packet["instruction"] += " Prepare the requested change and return its server confirmation card."
+    return packet
+
+
 class DagRunner:
     def __init__(self, orchestrator, req, execution):
         self.router = orchestrator
@@ -254,7 +270,7 @@ class DagRunner:
         # message, session binding and shared confirmation guard.
         def view(agent, tools):
             return [{"role": "user", "content": [{"type": "text", "text": json.dumps(
-                {"assignment": assignment}, ensure_ascii=False)}]}]
+                task_context(assignment, req), ensure_ascii=False)}]}]
         scoped = replace(req, dag_assignment=assignment, dag_tool_limit=TASK_TOOLS[task.kind],
                          dispatch_role=run.role, context_view=view, context="", history=[], entities={},
                          dag_ticket=(self.state.plan.id, task.id, self.state.revision, req.turn),

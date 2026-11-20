@@ -85,10 +85,12 @@ async def session(case, mode, rep, stage, cap):
             if t>1 and (not row["cards"] or row["events"]):
                 break
             row["user_turns"].append(message)
-            intents = []
+            intents, role_outputs = [], []
             def capture(e):
                 if (e.get("type"),e.get("kind"),e.get("name"))==("end","model","intent"):
                     intents.append(e["data"].get("output",[]))
+                if (e.get("type"),e.get("kind"),e.get("name"))==("end","model","roles"):
+                    role_outputs.append(e["data"].get("output",[]))
             start = time.monotonic()
             try:
                 with live_events.capture(capture):
@@ -101,7 +103,7 @@ async def session(case, mode, rep, stage, cap):
             row["replies"].append(result.response)
             row["steps"].append(dict(reason=result.routing_reason,intent_responses=intents,
                                      dag=result.semantic_routing.get("dag"),roles=result.agent_types,
-                                     traces=result.tool_traces,workflow=result.workflow.get("node_path",[])))
+                                     traces=result.tool_traces,role_outputs=role_outputs,workflow=result.workflow.get("node_path",[])))
             for trace in result.tool_traces:
                 if trace["tool_name"]=="load_skill":
                     continue
@@ -154,6 +156,8 @@ async def run(stage):
             for i,case in enumerate(cases(stage)):
                 j = (i+rep-1)%3
                 modes = MODES[j:]+MODES[:j]
+                if stage == "replay":
+                    modes = ("dag",)
                 paths = [OUT/stage/f"{case.key}-{rep}-{m}" for m in modes]
                 if all((p/"trace.json").exists() for p in paths):
                     continue

@@ -19,6 +19,7 @@ from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.shared.exceptions import McpError
 
+from mcp_tools.retail_domain import WRITE_KINDS
 from agents.tools import AgentToolSpec
 from mcp_tools.retail_protocol import build_context_meta
 
@@ -214,13 +215,18 @@ class RetailMCPClient:
         if name not in self._tools:
             raise RetailMCPProtocolError(f"工具不在 MCP 白名单: {name}")
 
+        ticket = None
+        if name in WRITE_KINDS and getattr(req, "dag_assignment", None) is not None:
+            ticket = getattr(req, "dag_ticket", None)
+            if not ticket:
+                raise RetailMCPProtocolError("Missing ticket for assigned DAG write")
         meta = build_context_meta(
             client_user_id=req.user_id,
             conv_id=req.conv_id,
             request_id=req.request_id,
             turn=req.turn,
             message=req.message,
-            language=self.language,
+            language=self.language, dag_ticket=ticket,
         )
         request = types.ClientRequest(
             types.CallToolRequest(
