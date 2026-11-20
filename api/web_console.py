@@ -296,8 +296,20 @@ class WebSession:
     def log_path(self) -> Path:
         return self.folder / "events.jsonl"
 
+    @property
+    def dag_mode(self):
+        agent = getattr(self.runtime.service, "agent", None)
+        return getattr(getattr(agent, "orchestrator", None), "routing_mode", "") == "dag"
+
     def read_snapshot(self) -> Dict[str, Any]:
         user = bound_user(self.db_path, self.client_id, self.conv_id)
+        if self.dag_mode:
+            # Task traces and replay files need only order status, never the order payload.
+            with closing(_connect_ro(self.db_path)) as connection:
+                rows = connection.execute("SELECT order_id, payload FROM orders WHERE user_id=?", (user,)).fetchall()
+                orders = {r["order_id"]: {"status": json.loads(r["payload"]).get("status")} for r in rows}
+            return {"bound_user": "verified" if user else None,
+                    "business": {"users": {}, "orders": orders, "products": {}}, "state": {}}
         return {"bound_user": user,
                 "business": read_business(self.db_path, user, sorted(self.touched_orders)),
                 "state": read_state(self.db_path, self.client_id, self.conv_id)}
@@ -308,6 +320,8 @@ class WebSession:
         key_column = {"users": "user_id", "orders": "order_id", "products": "product_id"}[table]
         with closing(_connect_ro(self.template)) as connection:
             row = connection.execute(f"SELECT payload FROM {table} WHERE {key_column}=?", (key,)).fetchone()
+        if row and self.dag_mode:
+            return {"status": json.loads(row[0]).get("status")}
         return json.loads(row[0]) if row else None
 
     def log(self, event: Dict[str, Any]) -> None:
@@ -445,6 +459,11 @@ async def run_turn(session: WebSession, message: str) -> asyncio.Queue:
             push({"type": "db", "trigger": trigger, "changes": changes, "snapshot": current})
 
     def sink(event: Dict[str, Any]) -> None:
+        if session.dag_mode:
+            data = event.get("data") or {}
+            safe = {k: data[k] for k in ("phase", "next_role", "waiting_reason", "success",
+                                         "result_success", "tools_used", "usage", "cost_cny") if k in data}
+            event = {**event, "data": safe}
         push(event)
         if event.get("type") == "point" and event.get("kind") == "tool":
             data = event.get("data") or {}
@@ -461,10 +480,11 @@ async def run_turn(session: WebSession, message: str) -> asyncio.Queue:
             refresh({"turn_end": True})
             session.turn_snapshots[turn] = session.snapshot
             summary = session.runtime.ledger.summary()
-            push({"type": "turn_end", "response": result.response, "success": result.success,
+            push({"type": "turn_end", "response": result.response, "success": result.success, **result.orchestration_trace(),
                   "tools_used": list(result.tools_used or []), "escalated": bool(result.escalated),
-                  "workflow": live_events.clip(getattr(result, "workflow", {}) or {}),
-                  "response_guard": live_events.clip(getattr(result, "response_guard", {}) or {}),
+                  "workflow": ({"node_path": result.workflow.get("node_path", [])} if session.dag_mode else
+                               live_events.clip(getattr(result, "workflow", {}) or {})),
+                  "response_guard": {} if session.dag_mode else live_events.clip(getattr(result, "response_guard", {}) or {}),
                   "latency_ms": round((time.monotonic() - started) * 1000, 1),
                   "cost_cny": round(summary["spent_cny"] - spent_before, 6),
                   "session_cost_cny": round(summary["spent_cny"], 6)})

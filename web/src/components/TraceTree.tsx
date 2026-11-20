@@ -220,6 +220,13 @@ export function TraceTree({ turn, onJump }: { turn: Turn; onJump: () => void }) 
           {turn.cost != null && ` · ¥${turn.cost.toFixed(4)}`}
         </span>
       </div>
+      {turn.orchestrationMode && <div className="mod">
+        <strong>{turn.orchestrationMode} · {turn.turnStatus}</strong>
+        {!!turn.taskRuns?.length && <ol>{turn.taskRuns.map((task) =>
+          <li key={task.id + task.attempt}>{task.id} · {task.role} · {task.status}</li>)}</ol>}
+        {turn.taskStates?.filter((task) => !turn.taskRuns?.some((run) => run.id === task.id))
+          .map((task) => <div key={task.id}>{task.id} · {task.status} {task.reason}</div>)}
+      </div>}
       {turn.roots.map((id) => (
         <div className="mod" key={id}>
           <Card id={id} turn={turn} open={open} toggle={toggle} onJump={onJump} />

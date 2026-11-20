@@ -58,6 +58,10 @@ export interface Turn {
   cost?: number;
   latency?: number;
   changes: Change[];
+  orchestrationMode?: string;
+  turnStatus?: string;
+  taskRuns?: {id: string; role: string; status: string; attempt: number}[];
+  taskStates?: {id: string; status: string; reason: string}[];
   startedAt: number;
 }
 
@@ -173,7 +177,8 @@ export function reducer(state: State, action: Action): State {
     case "turn_end":
     case "turn_error": {
       const next = updateTurn(state, ev.turn!, (turn) => ({
-        ...turn, running: false, response: ev.response, error: ev.error, cost: ev.cost_cny, latency: ev.latency_ms,
+        ...turn, orchestrationMode: ev.orchestration_mode, turnStatus: ev.turn_status,
+        taskRuns: ev.task_runs, taskStates: ev.task_states, running: false, response: ev.response, error: ev.error, cost: ev.cost_cny, latency: ev.latency_ms,
       }));
       const snaps = { ...next.snapshots };
       if (!snaps[ev.turn!] && next.snapshot) snaps[ev.turn!] = next.snapshot;

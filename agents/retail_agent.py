@@ -282,6 +282,34 @@ class RetailTurnResult:
     # 统一循环记录的模型／工具追踪片段与本轮上下文压缩记录。
     spans: List[Dict[str, Any]] = field(default_factory=list)
     context: Dict[str, Any] = field(default_factory=dict)
+    orchestration_mode: str = ""
+
+    @property
+    def task_runs(self):
+        dag = self.semantic_routing.get("dag") or {}
+        return [attempt for attempt in dag.get("attempts", []) if attempt["turn"] == self.turn]
+
+    @property
+    def turn_status(self):
+        dag = self.semantic_routing.get("dag") or {}
+        if self.escalated:
+            return "handed_off"
+        if dag.get("stop") == "unknown_result":
+            return "unknown_result"
+        if (self.response_guard.get("terminal") or self.response_guard.get("display_failed")):
+            return "unresolved"
+        if self.prepared_op_ids or any(t["status"] == "waiting_user" for t in dag.get("tasks", [])):
+            return "waiting_user"
+        if self.success:
+            return "completed"
+        return "unresolved"
+
+    def orchestration_trace(self):
+        dag = self.semantic_routing.get("dag") or {}
+        return {"orchestration_mode": self.orchestration_mode, "turn_status": self.turn_status,
+                "task_runs": self.task_runs, "task_states": dag.get("tasks", []),
+                "plan_id": dag.get("plan_id", "")}
+
 
 
 class RetailService:
@@ -938,6 +966,7 @@ class RetailService:
             fallback_used=bool(meta.get("fallback_used")),
             role_traces=list(meta.get("role_traces") or []),
             semantic_routing=dict(request.retail_routing),
+            orchestration_mode=getattr(getattr(self.agent, "orchestrator", None), "routing_mode", "single"),
             support_enabled=self.support_enabled,
             support_scope=(
                 analysis.scope_state if self.support_enabled else ""
@@ -1038,6 +1067,7 @@ class RetailService:
             "primary_agent": result.primary_agent,
             "supporting_agents": list(result.supporting_agents),
             "routing_reason": result.routing_reason,
+            **result.orchestration_trace(),
             "semantic_routing": dict(result.semantic_routing),
             "routing_confidence": result.routing_confidence,
             "composer_used": result.composer_used,
@@ -1051,6 +1081,10 @@ class RetailService:
                 "context_limit": result.support_context_limit,
             },
         }
+        if result.orchestration_mode == "dag":
+            trace = {key: trace[key] for key in ("request_id", "turn", "success", "escalated", "latency_ms",
+                                                 "agent_types", "tools_used", "primary_agent", "routing_reason")}
+            trace.update(result.orchestration_trace())
         with self._log_lock:
             if result.request_id in self._traces:
                 self._traces[result.request_id] = trace
@@ -1110,6 +1144,7 @@ class RetailService:
             "primary_agent": result.primary_agent,
             "supporting_agents": result.supporting_agents,
             "routing_reason": result.routing_reason,
+            **result.orchestration_trace(),
             "semantic_routing": dict(result.semantic_routing),
             "routing_confidence": result.routing_confidence,
             "composer_used": result.composer_used,

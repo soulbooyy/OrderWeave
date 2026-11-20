@@ -349,6 +349,12 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    orchestration_mode: str = ""
+    turn_status: str = ""
+    task_runs: List[Dict[str, Any]] = Field(default_factory=list)
+    task_states: List[Dict[str, Any]] = Field(default_factory=list)
+    plan_id: str = ""
+    success: Optional[bool] = None
     conv_id: str
     request_id: str = ""
     response: str
@@ -480,8 +486,10 @@ async def chat(req: ChatRequest):
             intent="retail_support",
             intent_group="retail",
             agent_type=result.agent_type.value,
-            agent_types=result.agent_types or [result.agent_type.value],
-            primary_agent=result.primary_agent or result.agent_type.value,
+            agent_types=result.agent_types if result.orchestration_mode == "dag" else result.agent_types or [result.agent_type.value],
+            primary_agent=result.primary_agent if result.orchestration_mode == "dag" else result.primary_agent or result.agent_type.value,
+            success=result.success, routing_reason=result.routing_reason,
+            **result.orchestration_trace(),
             supporting_agents=result.supporting_agents,
             tools_used=result.tools_used,
             escalated=result.escalated,

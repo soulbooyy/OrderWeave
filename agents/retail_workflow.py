@@ -364,7 +364,7 @@ class RetailWorkflow:
                 outcome = runner.finish()
                 call["result"] = RetailTurnResult(response=outcome.response, success=outcome.success,
                     agent_type=AgentType.RETAIL, request_id=req.request_id, turn=req.turn, latency_ms=0,
-                    semantic_routing=req.retail_routing)
+                    semantic_routing=req.retail_routing, orchestration_mode="dag")
                 return self._step(state, "recover_result", phase="reconciled", plan_id=execution.plan.id,
                                   waiting_reason="", result={"success": outcome.success})
         # 非等待点崩溃可能已完成写入：只读权威事件，不重跑 Agent 或工具。

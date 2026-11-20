@@ -91,6 +91,17 @@ def test_repeated_specialist_through_service(workflow, tmp_path, monkeypatch):
     result = asyncio.run(run())
     assert seen == [("v","technical","4768869376"),("o","billing","#W6564160"),("s","technical","2652637226")]
     assert result.success
+    assert result.orchestration_mode == "dag" and result.turn_status == "completed"
+    assert [row["id"] for row in result.task_runs] == ["v", "o", "s"]
+    public = service.get_tool_trace(result.request_id)
+    assert public["task_runs"] == result.task_runs and "payment_history" not in json.dumps(public)
+    from api import main
+    from types import SimpleNamespace
+    async def observed(*args):
+        return result
+    monkeypatch.setattr(main, "_retail_runtime", SimpleNamespace(service=SimpleNamespace(handle_turn=observed)))
+    payload = asyncio.run(main.chat(main.ChatRequest(message="example", conv_id="c")))
+    assert not payload.primary_agent and payload.task_runs == result.task_runs and payload.success
 
 
 @requires_seed
@@ -184,6 +195,7 @@ def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow,reply):
     op, = store.active_pending("u","c")
     assert op["status"]=="displayed" and op["display_text"] in first.response and not first.success
     assert [r["status"] for r in first.semantic_routing["dag"]["tasks"]] == ["waiting_user", "blocked"]
+    assert first.turn_status == "waiting_user" and not first.success
     if reply == "binding_mismatch":
         from agents.agent_orchestrator import Request
         from agents.retail_dag_runner import DagRunner
