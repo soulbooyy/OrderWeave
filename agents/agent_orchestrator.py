@@ -207,6 +207,8 @@ class Request:
     retail_store: Any = None
     dag_assignment: Optional[dict] = None
     dag_ticket: Optional[tuple] = None
+    dag_post_write: dict = field(default_factory=dict)
+    dag_confirmation_basis: Optional[tuple[str, str]] = None
     dag_tool_limit: Optional[frozenset[str]] = None
     catalog_steps: dict = field(default_factory=dict)
 
@@ -1137,7 +1139,7 @@ class AgentOrchestrator:
         t0 = time.monotonic()
         retail_mode = bool(getattr(self, "retail_mode", False))
         language = str(getattr(self, "language", "zh"))
-        if schedule and retail_mode and self.routing_mode == "dag" and req.retail_store is not None:
+        if schedule and retail_mode and req.retail_store is not None:
             from agents.retail_dag_runner import DagRunner
             resumed = DagRunner.resume(self, req)
             if resumed:

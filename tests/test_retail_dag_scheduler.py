@@ -136,7 +136,7 @@ def test_durable_claim_compare_and_swap(tmp_path):
 
 @pytest.mark.parametrize("workflow", ["legacy","langgraph"])
 @pytest.mark.parametrize("reply", ["Yes, please proceed.", "No", "human agent", "change the refund destination", "Use order #W9999999",
-                                   "What color is variant 1665571435?", "expired", "binding_mismatch", "undisplayed", "crash_after_commit"])
+                                   "What color is variant 1665571435?", "rollback_keyword", "publish_basis", "publish_after_commit", "expired", "binding_mismatch", "undisplayed", "crash_after_commit"])
 @requires_seed
 def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow,reply):
     import asyncio,json
@@ -157,11 +157,18 @@ def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow,reply):
             "payment_method_id":order["payment_history"][0]["payment_method_id"]}
     rows = [dict(node("ret","return_change"),quote="return from "+oid,target=oid,output="executed"),
             dict(node("read","order_lookup","ret"),quote="then check status of "+oid,target=oid,output="status")]
+    if reply == "publish_after_commit":
+        rows[1]["output"] = "purchased_item_count"
+    if reply == "publish_basis":
+        rows[0]["depends_on"] = ["count"]
+        rows.insert(0, dict(node("count", "order_lookup"), quote="count items in "+oid, target=oid,
+                            output="purchased_item_count"))
     tools = retail_tools(store)
     calls = []
     async def turn(message):
         side = [dict(node("spec"),quote=message,target="1665571435",output="color")]
-        app = router("dag",side if message.startswith("What color") else rows)
+        mode = "keyword" if reply == "rollback_keyword" and message.startswith("Yes") else "dag"
+        app = router(mode, side if message.startswith("What color") else rows)
         app.language = "en"
         app.set_shared_tools(tools)
         async def execute(req):
@@ -194,6 +201,11 @@ def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow,reply):
     first = asyncio.run(turn(" ".join(r["quote"] for r in rows)))
     op, = store.active_pending("u","c")
     assert op["status"]=="displayed" and op["display_text"] in first.response and not first.success
+    if reply == "publish_basis":
+        count = f'{len(order["items"])} items'
+        assert count in first.response and first.response.index(count) < first.response.index(op["display_text"])
+        assert first.response.count(op["display_text"]) == 1
+        return
     assert [r["status"] for r in first.semantic_routing["dag"]["tasks"]] == ["waiting_user", "blocked"]
     assert first.turn_status == "waiting_user" and not first.success
     if reply == "binding_mismatch":
@@ -232,6 +244,16 @@ def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow,reply):
         asyncio.run(turn("Yes, please proceed."))
         assert not store.active_pending("u","c")
         assert not any(e["event_type"]=="return_requested" for e in store.list_events("u","c"))
+        return
+    if reply == "rollback_keyword":
+        recovered = asyncio.run(turn("Yes, please proceed."))
+        assert recovered.success and recovered.orchestration_mode == "dag"
+        assert recovered.semantic_routing["dag"]["plan_id"] == first.semantic_routing["dag"]["plan_id"]
+        assert sum(e["event_type"] == "return_requested" for e in store.list_events("u", "c")) == 1
+        return
+    if reply == "publish_after_commit":
+        answer = asyncio.run(turn("Yes, please proceed."))
+        assert answer.success and f'{len(order["items"])} items' in answer.response
         return
     second = asyncio.run(turn(reply))
     if reply.startswith("What color"):

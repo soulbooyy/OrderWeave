@@ -296,7 +296,7 @@ class RetailTurnResult:
             return "handed_off"
         if dag.get("stop") == "unknown_result":
             return "unknown_result"
-        if (self.response_guard.get("terminal") or self.response_guard.get("display_failed")):
+        if self.response_guard.get("terminal") or self.response_guard.get("display_failed"):
             return "unresolved"
         if self.prepared_op_ids or any(t["status"] == "waiting_user" for t in dag.get("tasks", [])):
             return "waiting_user"
@@ -309,7 +309,6 @@ class RetailTurnResult:
         return {"orchestration_mode": self.orchestration_mode, "turn_status": self.turn_status,
                 "task_runs": self.task_runs, "task_states": dag.get("tasks", []),
                 "plan_id": dag.get("plan_id", "")}
-
 
 
 class RetailService:
@@ -801,7 +800,8 @@ class RetailService:
             bound_user_id=current_bound_user,
             session_events=self.store.list_events(client_user_id, conv_id),
             user_order_ids=self._user_order_ids(client_user_id, conv_id, message),
-            return_basis=return_basis,
+            return_basis=return_basis, dag_confirmation_basis=request.dag_confirmation_basis,
+            dag_post_write=request.dag_post_write,
             language=self.language,
         )
         guarded.record["facts_read_ms"] = round(facts_read_ms, 3)
@@ -819,6 +819,8 @@ class RetailService:
                     text = f"{text}\n\n{note}"
                     guarded.record["plan_reminder"] = True
         if guarded.record.get("recovery_signature"):
+            if request.retail_routing.get("dag"):
+                response.success = False
             previous = self.store.last_response_guard(client_user_id, conv_id)
             same = (previous.get("turn") in (turn - 1, turn)
                     and previous.get("recovery_signature") == guarded.record["recovery_signature"])
@@ -851,6 +853,9 @@ class RetailService:
             if not recorded:
                 display_failed.append(str(item["op_id"]))
 
+        if display_failed:
+            guarded.record["display_failed"] = True
+            response.success = False
         if not text:
             text = (
                 "Sorry, I cannot complete this request right now. Please try "
@@ -966,7 +971,8 @@ class RetailService:
             fallback_used=bool(meta.get("fallback_used")),
             role_traces=list(meta.get("role_traces") or []),
             semantic_routing=dict(request.retail_routing),
-            orchestration_mode=getattr(getattr(self.agent, "orchestrator", None), "routing_mode", "single"),
+            orchestration_mode=("dag" if request.retail_routing.get("dag") else
+                                getattr(getattr(self.agent, "orchestrator", None), "routing_mode", "single")),
             support_enabled=self.support_enabled,
             support_scope=(
                 analysis.scope_state if self.support_enabled else ""

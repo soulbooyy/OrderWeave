@@ -12,11 +12,12 @@ _LABELS = {
 }
 
 
-def compose_tasks(state, language, note):
+def compose_tasks(state, language, note, *, by_task=None):
     """Use only the declared output of a verified node. Preserve the server's card verbatim."""
     english = language == "en"
     lines = []
     for task in state.plan.nodes:
+        start = len(lines)
         run = state.runs[task.id]
         target, _ = state.target(task)
         label = _LABELS.get(task.output, ("所请求的信息", "requested information"))[english]
@@ -27,8 +28,8 @@ def compose_tasks(state, language, note):
             parent = state.runs[task.run_if.source]
             field = task.run_if.field
             basis = _LABELS[field][english]
-            lines.append((f"With {basis} {parent.facts[field]}, your condition selects “{task.quote}”."
-                          if english else f"根据已核实的{basis}（{parent.facts[field]}），应按您的条件办理“{task.quote}”。"))
+            lines.append((f"With {basis} {parent.facts[field]}, your condition selects {subject}{label}."
+                          if english else f"根据已核实的{basis}（{parent.facts[field]}），本次选择{subject}{label}。"))
         if run.status == Status.SUCCEEDED and run.refs and task.output in run.facts:
             value = run.facts[task.output]
             if task.output == "purchased_item_count":
@@ -41,6 +42,8 @@ def compose_tasks(state, language, note):
             lines.append(line)
         elif run.status != Status.WAITING_USER:
             lines.append(f"{subject}{label} is still unverified." if english else f"{subject}的{label}尚未核实。")
+        if by_task is not None:
+            by_task[task.id] = lines[start:]
     if note:
         lines.append(note)
     return "\n".join(lines)

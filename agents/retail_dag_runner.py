@@ -270,6 +270,8 @@ class DagRunner:
             if _stop_exception(exc):
                 raise
             return
+        response.meta = {**(response.meta or {}), "task_id": task.id}
+        response.tool_traces = [{**trace, "task_id": task.id} for trace in response.tool_traces]
         self.responses.append(response)
         traces = response.tool_traces
         guard = req.retail_guard or {}
@@ -330,7 +332,21 @@ class DagRunner:
             pending = self.req.retail_store.active_pending(self.req.user_id, self.req.conv_id)
             self.note = next((op["display_text"] for op in pending
                               if op["op_id"] == self.state.operation.get("op_id")), "")
-        content = compose_tasks(self.state, self.router.language, self.note)
+        by_task = {}
+        body = compose_tasks(self.state, self.router.language, "", by_task=by_task)
+        event = None
+        for attempt in self.state.attempts:
+            if attempt["turn"] != self.req.turn:
+                continue
+            key = attempt["id"]
+            run = self.state.runs[key]
+            if run.facts.get("executed") and run.refs:
+                event = run.refs[0]
+            elif event:
+                self.req.dag_post_write.setdefault(event, []).extend(by_task.get(key, ()))
+        if self.state.stop == "confirmation" and self.state.operation and body:
+            self.req.dag_confirmation_basis = (self.state.operation["op_id"], body)
+        content = "\n".join(filter(None, (body, self.note)))
         result = OrchestratorResult(
             request_id=self.req.request_id, intent=self.req.intent, agent_type=AgentType.RETAIL,
             response=content, composer_output=content, success=self.state.complete,

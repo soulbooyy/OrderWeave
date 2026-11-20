@@ -258,7 +258,7 @@ def constrain_response(
     pending_before: list[dict[str, Any]], pending_after: list[dict[str, Any]],
     turn: int, bound_user_id: str | None, language: str = "zh",
     session_events: list[dict[str, Any]] | None = None,
-    user_order_ids: set[str] | None = None, return_basis=None,
+    user_order_ids: set[str] | None = None, return_basis=None, dag_confirmation_basis=None, dag_post_write=None,
 ) -> GuardedResponse:
     """输入仅限服务层选出的同会话本轮事实；开放语义仍需独立复核。"""
     started = time.perf_counter()
@@ -514,12 +514,22 @@ def constrain_response(
             offset += len(unit)
         text = _STATUS.sub(lambda match: checked_status(match) if match.start() in starts else match.group(), text)
 
+    checked_text = text
     if blocks:
+        if dag_post_write and bound_user_id and not findings:
+            for event in submitted + executed:
+                approved = dag_post_write.get(f"event:{event['event_id']}", ())
+                blocks.extend(line for line in approved if line in checked_text)
         text = "\n\n".join(blocks)
     for item in pending_after:
         display = item.get("display_text") or ""
         if display and (item in prepared or display in candidate):
             note = _selection_note(return_basis, item, english)
+            if (dag_confirmation_basis and item in prepared and bound_user_id
+                    and item.get("retail_user_id") == bound_user_id
+                    and item["op_id"] == dag_confirmation_basis[0] and not findings
+                    and dag_confirmation_basis[1] in checked_text):
+                note = "\n".join(filter(None, (dag_confirmation_basis[1], note)))
             if note:
                 text = note + "\n\n" + text
             text = (text + "\n\n" + display).strip()

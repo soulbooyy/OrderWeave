@@ -349,7 +349,7 @@ class RetailWorkflow:
         from agents.retail_agent import RetailTurnResult
         call = self._call.get()
         store = self.service.store
-        if self._uses_roles() and getattr(self.service.agent.orchestrator, "routing_mode", None) == "dag":
+        if self._uses_roles() and (state.get("plan_id") or getattr(self.service.agent.orchestrator, "routing_mode", "") == "dag"):
             from agents.agent_orchestrator import Request
             for execution in store.open_dags(call["user"], call["conv"]):
                 if state.get("plan_id") and execution.plan.id != state["plan_id"]:

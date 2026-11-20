@@ -287,6 +287,7 @@ class WebSession:
     turn_snapshots: Dict[int, Dict[str, Any]] = field(default_factory=dict)
     task: Optional[asyncio.Task] = None
     template: Optional[Path] = None
+    resumed_dag: bool = False
 
     @property
     def db_path(self) -> Path:
@@ -299,7 +300,7 @@ class WebSession:
     @property
     def dag_mode(self):
         agent = getattr(self.runtime.service, "agent", None)
-        return getattr(getattr(agent, "orchestrator", None), "routing_mode", "") == "dag"
+        return self.resumed_dag or getattr(getattr(agent, "orchestrator", None), "routing_mode", "") == "dag"
 
     def read_snapshot(self) -> Dict[str, Any]:
         user = bound_user(self.db_path, self.client_id, self.conv_id)
@@ -307,7 +308,8 @@ class WebSession:
             # Task traces and replay files need only order status, never the order payload.
             with closing(_connect_ro(self.db_path)) as connection:
                 rows = connection.execute("SELECT order_id, payload FROM orders WHERE user_id=?", (user,)).fetchall()
-                orders = {r["order_id"]: {"status": json.loads(r["payload"]).get("status")} for r in rows}
+                orders = {r["order_id"]: {"status": json.loads(r["payload"]).get("status")} for r in rows
+                          if r["order_id"] in self.touched_orders}
             return {"bound_user": "verified" if user else None,
                     "business": {"users": {}, "orders": orders, "products": {}}, "state": {}}
         return {"bound_user": user,
@@ -435,6 +437,9 @@ async def run_turn(session: WebSession, message: str) -> asyncio.Queue:
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_running_loop()
     loop_thread = threading.get_ident()
+    service = session.runtime.service
+    if not session.dag_mode and hasattr(service.agent, "orchestrator"):
+        session.resumed_dag = bool(service.store.open_dags(session.client_id, session.conv_id))
     session.turn += 1
     turn = session.turn
 
@@ -459,15 +464,16 @@ async def run_turn(session: WebSession, message: str) -> asyncio.Queue:
             push({"type": "db", "trigger": trigger, "changes": changes, "snapshot": current})
 
     def sink(event: Dict[str, Any]) -> None:
+        tool_call = event.get("type") == "point" and event.get("kind") == "tool"
+        if tool_call:
+            session.touched_orders.update(_order_ids_in((event.get("data") or {}).get("input")))
         if session.dag_mode:
             data = event.get("data") or {}
             safe = {k: data[k] for k in ("phase", "next_role", "waiting_reason", "success",
                                          "result_success", "tools_used", "usage", "cost_cny") if k in data}
             event = {**event, "data": safe}
         push(event)
-        if event.get("type") == "point" and event.get("kind") == "tool":
-            data = event.get("data") or {}
-            session.touched_orders.update(_order_ids_in(data.get("input")))
+        if tool_call:
             refresh({"tool": event.get("name"), "event": event.get("id")})
 
     async def work() -> None:
