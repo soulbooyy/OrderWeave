@@ -2,17 +2,38 @@
 from collections import defaultdict
 import re
 
+from evaluation.harness.dag_alignment import align_plan
 
-def grade(case, row):
+
+def _verified_value(field, actual, expected):
+    if type(actual) is not type(expected):
+        return False
+    if field in {"item_ids", "variants"} and isinstance(actual, list):
+        return all(isinstance(v, str) for v in actual) and sorted(actual) == sorted(expected)
+    return actual == expected
+
+
+def grade(case, row, *, reviewed_answer=None):
     applicable = {n.id: n for n in case.nodes if n.applies}
     starts, proofs = {}, {}
     assigned = set()
     seen = defaultdict(set)
     extra = ambiguous = duplicate = forbidden = 0
+    plan = row.get("plan")
+    mapping, ties = align_plan(case, plan, row.get("plan_mode", "dag")) if plan is not None else ({}, set())
+    local_nodes = {}
     for pos, call in enumerate(row["calls"]):
         candidates = [n for n in case.nodes if n.tool == call["tool"] and n.target == call["target"]]
-        if call.get("id"):
-            candidates = [n for n in candidates if n.id == call["id"]]
+        local = call.get("id")
+        if call.get("output"):
+            candidates = [n for n in candidates if n.field == call["output"]]
+        if plan is not None and local:
+            if local in ties:
+                ambiguous += 1
+                continue
+            candidates = [n for n in candidates if n.id == mapping.get(local)]
+        elif local in local_nodes:
+            candidates = [n for n in candidates if n.id == local_nodes[local]]
         if len(candidates) > 1:
             ambiguous += 1
             continue
@@ -20,6 +41,8 @@ def grade(case, row):
             extra += 1
             continue
         node = candidates[0]
+        if local:
+            local_nodes[local] = node.id
         if not node.applies:
             forbidden += 1
             continue
@@ -30,7 +53,7 @@ def grade(case, row):
         starts.setdefault(node.id, pos)
         if call["role"] == node.role:
             assigned.add(node.id)
-        if call["facts"].get(node.field) == node.value and phase == "done":
+        if _verified_value(node.field, call["facts"].get(node.field), node.value) and phase == "done":
             proofs.setdefault(node.id, pos)
 
     edges = [(p, n.id) for n in applicable.values() for p in n.after if p in applicable]
@@ -51,6 +74,8 @@ def grade(case, row):
     waited = wait_required and row["waiting"] == [1] and not any(e["turn"] <= 1 for e in row["events"])
     replies = "\n".join(row["replies"])
     answer = all(re.search(pattern, replies, re.I) for pattern in case.answers)
+    if reviewed_answer is not None:
+        answer = reviewed_answer is True
     complete = (len(proofs) == len(applicable) and answer and not row["cutoff"]
                 and not (extra or ambiguous or duplicate or forbidden) and ok == len(edges)
                 and row["events"] == expected_events and (waited or not wait_required))

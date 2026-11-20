@@ -17,6 +17,7 @@ from agents.retail_tools import retail_tools
 from core.intent_recognizer import IntentRecognizer
 from core.retail_subtasks import OWNERS
 from evaluation.harness.config import SEED_PATH
+from evaluation.harness.dag_alignment import grade_plan
 from evaluation.harness.dag_cases import CASES, MODES, REPEATS, SEED_SHA256
 from evaluation.harness.dag_scoring import grade
 from evaluation.harness.dag_script import Script, role_classes
@@ -25,27 +26,41 @@ from mcp_tools.retail_store import RetailStore
 
 
 def observation(trace, turn, uid):
-    args = trace["input"]
+    args = trace.get("input") if isinstance(trace.get("input"), dict) else {}
     tool = trace["tool_name"]
-    target = args.get("order_id") or args.get("item_id") or args.get("product_id")
-    result = trace.get("result") or {}
+    arg_key = {"get_item_details":"item_id", "get_product_details":"product_id"}.get(tool, "order_id")
+    target = args.get(arg_key)
+    result = trace.get("result") if isinstance(trace.get("result"), dict) else {}
     facts = {}
     phase = "done"
-    if (trace.get("result_success") and result.get("success") and not trace.get("blocked_by_guard")
-            and trace.get("tool_use_id")):
+    if (target and trace.get("result_success") is True and result.get("success") is True
+            and trace.get("tool_use_id") and trace.get("success") is not False
+            and not any(trace.get(flag) for flag in ("not_executed", "skipped", "blocked_by_guard"))):
         if tool == "get_order_details":
-            order = result["order"]
-            if order["user_id"] == uid and order["order_id"] == target:
-                facts["purchased_item_count"] = len(order["items"])
-        elif tool == "get_item_details" and result["item"]["item_id"] == target:
-            facts = {k: v for k, v in result["item"]["options"].items() if k in ("size", "color")}
-        elif tool == "return_delivered_order_items":
+            order = result.get("order")
+            if isinstance(order, dict) and uid and order.get("user_id") == uid and order.get("order_id") == target:
+                items = order.get("items")
+                if isinstance(items, list) and all(isinstance(i, dict) and i.get("item_id") for i in items):
+                    facts["purchased_item_count"] = len(items)
+                    facts["item_ids"] = [item["item_id"] for item in items]
+                if isinstance(order.get("status"), str):
+                    facts["status"] = order["status"]
+        elif tool == "get_product_details":
+            product = result.get("product")
+            if isinstance(product, dict) and product.get("product_id") == target and isinstance(product.get("variants"), dict):
+                facts["variants"] = sorted(product["variants"])
+        elif tool == "get_item_details":
+            item = result.get("item")
+            if isinstance(item, dict) and item.get("item_id") == target and isinstance(item.get("options"), dict):
+                facts = {k:v for k,v in item["options"].items() if k in ("size", "color", "ventilation")}
+        elif tool == "return_delivered_order_items" and result.get("op_id"):
             if result.get("action_status") == "executed":
                 facts = {"executed": True}
             elif result.get("action_status") == "pending_confirmation":
                 phase = "prepared"
     return dict(id=trace.get("task_id", ""), role=trace["agent_type"], tool=tool,
-                target=target, facts=facts, turn=turn, phase=phase)
+                target=target, facts=facts, turn=turn, phase=phase,
+                **({"op_id": result["op_id"]} if tool == "return_delivered_order_items" and result.get("op_id") else {}))
 
 
 async def run_case(case, mode, rep, root, seed, source, frozen=False):
@@ -91,6 +106,8 @@ async def run_case(case, mode, rep, root, seed, source, frozen=False):
         await service.workflow.close()
     row["requests"] = dict(script.calls)
     row["cutoff"] = script.cutoff
+    if mode != "keyword":
+        row.update(plan=script.first_plan, plan_mode=mode, plan_grade=grade_plan(case, script.first_plan, mode))
     row["grade"] = grade(case, row)
     status = store.get_order_details(client, conv, case.order)["order"]["status"]
     row["final_order_status"] = status
@@ -128,7 +145,7 @@ async def evaluate(seed):
                 for mode in MODES[start:] + MODES[:start]:
                     rows.append(await run_case(case, mode, rep+1, Path(folder), seed, source))
                 rows.append(await run_case(case, "dag", rep+1, Path(folder), seed, source, frozen=True))
-    return {"freeze": "71eb362", "seed_sha256": SEED_SHA256, "model": "offline-script",
+    return {"freeze": "71eb362", "scoring": "semantic-alignment-v2", "seed_sha256": SEED_SHA256, "model": "offline-script",
             "summary": {m: summarize([r for r in rows if r["mode"] == m]) for m in (*MODES, "frozen_dag")},
             "rows": rows}
 

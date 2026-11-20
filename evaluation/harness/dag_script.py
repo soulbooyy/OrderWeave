@@ -74,6 +74,7 @@ class Script:
     def __init__(self, mode, frozen=None):
         self.mode = mode
         self.frozen = frozen
+        self.first_plan = None
         self.messages = self
         self.calls = Counter()
         self.cutoff = False
@@ -107,6 +108,8 @@ class Script:
             if self.mode != "keyword":
                 packet["subtasks"] = rows if self.mode == "dag" else [
                     {k: n[k] for k in ("id", "kind", "quote")} for n in rows]
+                if self.calls["classifier"] == 1:
+                    self.first_plan = packet["subtasks"]
             answer = json.dumps(packet)
         return response(dict(type="text", text=answer))
 
