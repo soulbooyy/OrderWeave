@@ -50,7 +50,8 @@ def _stop_exception(ex: BaseException) -> bool:
         TurnRequestLimitExceeded,
     )
 
-    return isinstance(ex, (BudgetExceeded, TurnRequestLimitExceeded))
+    from core.dag_tool_log import JournalConflict
+    return isinstance(ex, (BudgetExceeded, TurnRequestLimitExceeded, JournalConflict))
 
 
 def _request_stop(req: "Request", ex: BaseException) -> bool:
@@ -211,6 +212,8 @@ class Request:
     dag_confirmation_basis: Optional[tuple[str, str]] = None
     dag_tool_limit: Optional[frozenset[str]] = None
     catalog_steps: dict = field(default_factory=dict)
+    dag_log_mode: str = "off"
+    dag_attempt: int = 0
     conversation_context: Optional[Any] = None
 
 

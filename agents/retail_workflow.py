@@ -351,7 +351,13 @@ class RetailWorkflow:
         store = self.service.store
         if self._uses_roles() and (state.get("plan_id") or getattr(self.service.agent.orchestrator, "routing_mode", "") == "dag"):
             from agents.agent_orchestrator import Request
-            for execution in store.open_dags(call["user"], call["conv"]):
+            executions = store.open_dags(call["user"], call["conv"])
+            if not executions or state.get("plan_id"):
+                terminal = store.unpublished_terminal(call["user"], call["conv"], store.current_turn(call["user"], call["conv"]),
+                                                      state.get("plan_id") or None)
+                if terminal:
+                    executions = [terminal]
+            for execution in executions:
                 if state.get("plan_id") and execution.plan.id != state["plan_id"]:
                     continue
                 bound = store.bound_user_id(call["user"], call["conv"])

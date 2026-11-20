@@ -13,6 +13,8 @@ import json
 import logging
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
+from core.dag_tool_log import KIND, protocol_pairs
+
 logger = logging.getLogger(__name__)
 
 # 无实测数据时的保守换算（英文与 JSON 混合约 3 字符／token）；之后用供应商实际 usage 校准。
@@ -93,7 +95,11 @@ class ContextEngine:
                 if old:
                     by_id = {c.get("id"): c for c in calls}
                     results = [self._elide(r, by_id.get(r.get("tool_use_id"))) for r in results]
-                if result_row and calls and all(c.get("name") in names for c in calls):
+                if (not result_row or result_row["turn"] != row["turn"] or result_row.get("agent") != row.get("agent")
+                        or not protocol_pairs(calls, result_row["content"])):
+                    index += 1
+                    continue
+                if all(c.get("name") in names for c in calls):
                     messages.append({"role": "assistant", "content": row["content"]})
                     messages.append({"role": "user", "content": results})
                 else:
@@ -129,7 +135,21 @@ class ContextEngine:
         return "[Tool result] " + " | ".join(str(r.get("content", "")) for r in results)
 
     def history(self, client: str, conv: str, tool_names: Iterable[str]) -> List[Dict[str, Any]]:
-        return self._render(self.store.conversation_log(client, conv), self.store.context_state(client, conv), tool_names)
+        rows = self.store.conversation_log(client, conv)
+        state = self.store.context_state(client, conv)
+        rows, summary, _ = self._legacy_sources(rows, state)
+        return self._render(rows, {**state, "summary": summary}, tool_names)
+
+    @staticmethod
+    def _legacy_sources(rows, state):
+        # An unscoped consumer has no authority for journal snapshots, mixed replies or their summaries.
+        boundary = max((r["turn"] for r in rows if r["kind"] == KIND), default=0)
+        summary = state.get("summary") or {}
+        if boundary:
+            rows = [r for r in rows if r["turn"] > boundary]
+            if summary.get("legacy_since") != boundary:
+                summary = {}
+        return rows, summary, boundary
 
     def view(self, client: str, conv: str, current: List[Dict[str, Any]], tool_names: Iterable[str],
              extra: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
@@ -157,7 +177,10 @@ class ContextEngine:
         # A legacy summary may incorporate internal tool results or an earlier identity.
         # Keep it on disk until a replacement is available, but exclude it from assembly and compaction.
         previous = cstate.get("summary") or {}
-        if conversation is not None and not conversation.background().get("history_summary"):
+        boundary = 0
+        if conversation is None:
+            rows, previous, boundary = self._legacy_sources(rows, cstate)
+        elif not conversation.background().get("history_summary"):
             previous = {}
         render_state = {**cstate, "summary": previous}
         everything = {"*"}
@@ -191,6 +214,8 @@ class ContextEngine:
                 summary = ""
             if summary:
                 cstate["summary"] = {"upto_turn": cutoff, "text": summary}
+                if boundary:
+                    cstate["summary"]["legacy_since"] = boundary
                 if conversation is not None:
                     scope = conversation.summary_scope(cutoff)
                     if previous and previous["scope"].get("audience") != scope["audience"]:
@@ -206,8 +231,9 @@ class ContextEngine:
     @staticmethod
     def _transcript_text(rows: List[Dict[str, Any]], previous: str, previous_upto: int) -> str:
         lines = [f"[Existing summary of turns 1-{previous_upto}]\n{previous}"] if previous else []
+        closed = {r["turn"] for r in rows if r["kind"] == "assistant"}
         for row in rows:
-            if row["turn"] <= previous_upto:
+            if row["kind"] == KIND or row["turn"] not in closed or row["turn"] <= previous_upto:
                 continue
             for block in row["content"]:
                 if block.get("type") == "text" and not str(block.get("text", "")).startswith(STATE_MARK):
@@ -236,6 +262,10 @@ class ContextEngine:
         """把一轮的用户消息、工具往返和最终回复整理为日志行。"""
         rows = [{"role": "user", "kind": "user", "content": user_content}]
         for exchange in transcript or []:
+            if KIND in exchange:
+                batch = exchange[KIND]
+                rows.append({"role": "assistant", "kind": KIND, "agent": batch["role"], "content": [batch]})
+                continue
             rows.append({"role": "assistant", "kind": "tool_call", "agent": exchange.get("agent"),
                          "content": exchange["assistant"]})
             rows.append({"role": "user", "kind": "tool_result", "agent": exchange.get("agent"),

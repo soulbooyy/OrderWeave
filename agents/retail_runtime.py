@@ -440,6 +440,7 @@ class RetailRuntimeConfig:
     # 小样本漏做写操作减半、安全不退步，成本约增一成半，默认开启。
     request_plan: bool = True
     routing_mode: str = DEFAULT_RETAIL_ROUTING_MODE
+    dag_log_mode: str = "off"
     conversation_context_enabled: bool = False
     recent_conversation_turns: int = DEFAULT_RECENT_TURNS
 
@@ -565,6 +566,7 @@ class RetailRuntimeConfig:
             semantic_routing=_env_bool("RETAIL_SEMANTIC_ROUTING", True),
             semantic_model_path=_env_optional_path("RETAIL_SEMANTIC_MODEL_PATH"),
             model_thinking=_env_text("RETAIL_MODEL_THINKING").lower(),
+            dag_log_mode=_env_text("RETAIL_DAG_TOOL_LOG", "off").lower(),
             conversation_context_enabled=_env_bool("RETAIL_CONVERSATION_CONTEXT_ENABLED", False),
             recent_conversation_turns=int(_env_text("RETAIL_RECENT_CONVERSATION_TURNS", str(DEFAULT_RECENT_TURNS))),
             context_mode=_env_text("RETAIL_CONTEXT_MODE", "compiled").lower(),
@@ -1024,6 +1026,7 @@ def _build_retail_runtime(config: RetailRuntimeConfig, encoder) -> RetailRuntime
         confirmation_client=client.for_stage("confirm", count_turn=True),
         confirmation_model=config.model,
         context_engine=context_engine,
+        dag_log_mode=config.dag_log_mode,
         conversation_context_enabled=config.conversation_context_enabled,
         recent_conversation_turns=config.recent_conversation_turns,
         skill_library=skill_library,

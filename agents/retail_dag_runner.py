@@ -11,6 +11,7 @@ from core.retail_dag import Status
 from core.intent_recognizer import IntentCategory
 from core.retail_dag_evidence import verify
 from core.retail_subtasks import OWNERS, PRIVATE, WRITES
+from core.dag_tool_log import JournalConflict, input_digest
 from core.dag_planning import target_outputs
 from core.task_context import choice_value, target_type, verified_entity
 from mcp_tools.retail_domain import WRITE_KINDS
@@ -158,6 +159,10 @@ class DagRunner:
             state.stop = ""
             waiting.move(Status.READY)
             return driver
+        terminal = store.unpublished_terminal(req.user_id, req.conv_id, req.turn - 1,
+                                              message_hash=None if text.lower() in {"continue", "继续"} else input_digest(text))
+        if terminal and (terminal.bound_user or None) == req.retail_user_id:
+            return cls(orchestrator, req, terminal)
         return None
 
     def reconcile(self):
@@ -168,14 +173,33 @@ class DagRunner:
         if run is None:
             return
         task = next(t for t in state.plan.nodes if t.id == run.task_id)
+        store = req.retail_store
+        batches = store.attempt_batches(req.user_id, req.conv_id, state.plan.id, run)
         if task.kind not in WRITES:
-            if run.status == Status.RUNNING:
+            traces = []
+            target = state.target(task)[0]
+            bound = store.bound_user_id(req.user_id, req.conv_id)
+            for batch in batches:
+                if batch["bound"] != bound or (state.bound_user or None) != bound:
+                    continue
+                for call in batch["calls"]:
+                    if call["state"] != "returned":
+                        continue
+                    tool, result = call["tool_use"], call["result"]
+                    if tool["id"] == result["tool_use_id"] and tool["name"] in TASK_TOOLS[task.kind]:
+                        traces.append(dict(tool_name=tool["name"], tool_use_id=tool["id"], input=tool["input"],
+                                           result=json.loads(result["content"]), result_success=call["outcome"] == "success"))
+            evidence = verify(task, traces, bound_user=bound, target=target)
+            if evidence and task.kind in PRIVATE and not verified_entity(store, req.user_id, req.conv_id, "order", target, bound):
+                evidence = None
+            if evidence and run.status == Status.RUNNING:
+                self.accept_evidence(task, run, evidence)
+            elif run.status == Status.RUNNING:
                 run.move(Status.FAILED, reason="interrupted_read")
             state.stop = ""
             self.save()
             return
         op = state.operation
-        store = req.retail_store
         if not op:
             recorded = store.prepared_for_task(state.plan.id, run.task_id, run.turn)
             pending = next((p for p in store.active_pending(req.user_id,req.conv_id) if p["op_id"] == recorded), None)
@@ -194,11 +218,16 @@ class DagRunner:
                     state.stop = "interrupted_before_display"
                 self.save()
                 return
-        matched = next((e for e in store.list_events(req.user_id, req.conv_id)
-                        if op and e["op_id"] == op["op_id"] and e["event_type"] == store.executed_event(op["kind"])
-                        and e["payload"].get("args") == op["args"] and e["payload"].get("kind") == op["kind"]), None)
-        if matched:
-            run.reconcile(op["op_id"], matched["event_id"])
+        if batches:
+            event_id = store.reconcile_tool_write(req.user_id, req.conv_id, state.plan.id, run,
+                                                  state.target(task)[0], op, batches)
+        else:
+            matched = next((e for e in store.list_events(req.user_id, req.conv_id)
+                            if op and e["op_id"] == op["op_id"] and e["event_type"] == store.executed_event(op["kind"])
+                            and e["payload"].get("args") == op["args"] and e["payload"].get("kind") == op["kind"]), None)
+            event_id = matched["event_id"] if matched else None
+        if event_id:
+            run.reconcile(op["op_id"], event_id)
             for child in state.plan.nodes:
                 downstream = state.runs[child.id]
                 if task.id in child.depends_on and downstream.reason == "dependency":
@@ -376,9 +405,13 @@ class DagRunner:
         scoped = replace(req, dag_assignment=assignment, dag_tool_limit=TASK_TOOLS[task.kind],
                          dispatch_role=run.role, context_view=view, context="", history=[], entities={},
                          dag_ticket=(self.state.plan.id, task.id, self.state.revision, req.turn),
-                         retail_handoff=None, transcript=None, spans=req.spans)
+                         retail_handoff=None, dag_attempt=run.attempt,
+                         transcript=req.transcript if req.dag_log_mode != "off" else None, spans=req.spans)
         try:
             response = await actor.handle(scoped)
+        except JournalConflict:
+            # Preserve the durable claim for evidence-only recovery.
+            raise
         except Exception as exc:
             unknown = task.kind in WRITES
             run.move(Status.BLOCKED if unknown else Status.FAILED, reason="interrupted")
@@ -406,12 +439,8 @@ class DagRunner:
             events = store.list_events(req.user_id, req.conv_id) if store and task.kind in WRITES else ()
             evidence = verify(task, traces, bound_user=req.retail_user_id, target=target,
                               events=events, operation=self.state.operation)
-            if evidence and task.output == "item_ids":
-                for dep in assignment["inputs"].values():
-                    if "variants" in dep:
-                        evidence.facts["item_ids"] = [v for v in evidence.facts["item_ids"] if v in dep["variants"]]
             if evidence:
-                run.move(Status.SUCCEEDED, facts=evidence.facts, refs=evidence.refs)
+                self.accept_evidence(task, run, evidence)
                 if (req.conversation_context and len(self.state.plan.nodes) == 1 and task.quote == req.message
                         and task.kind not in WRITES and not req.retail_pending):
                     req.conversation_context.audience = [run.role, task.kind, target]
@@ -420,6 +449,13 @@ class DagRunner:
             else:
                 run.move(Status.FAILED, reason="missing_evidence")
         self.save()
+
+    def accept_evidence(self, task, run, evidence):
+        if task.output == "item_ids":
+            for dep in self.state.inputs(task).values():
+                if "variants" in dep:
+                    evidence.facts["item_ids"] = [v for v in evidence.facts["item_ids"] if v in dep["variants"]]
+        run.move(Status.SUCCEEDED, facts=evidence.facts, refs=evidence.refs)
 
     def _prepared(self, task, traces):
         req = self.req

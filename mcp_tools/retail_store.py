@@ -21,6 +21,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
+from core.dag_tool_log import KIND, JournalConflict, authorized_exchange, batch_key, decode, transition
 from mcp_tools.retail_domain import WRITE_KINDS, DomainError, apply_write, canonical_args
 
 SCHEMA_VERSION = "1"
@@ -1099,43 +1100,277 @@ class RetailStore:
     def save_visible_turn(self, client_user_id: str, conv_id: str, turn: int, message: str, reply: str,
                           *, response_guard: Optional[Dict[str, Any]] = None, catalog_steps=None, return_basis=None) -> None:
         """每会话只保留两轮，同一轮重复收口不追加历史。"""
-        with self._tx() as connection:
-            row = connection.execute("SELECT payload_json FROM retail_dialogue WHERE client_user_id=? AND conv_id=?",
-                (client_user_id, conv_id)).fetchone()
-            pairs = json.loads(row["payload_json"]) if row else []
-            pairs = [p for p in pairs if p.get("turn") != turn]
-            pairs.append({"turn": turn, "user": message[:2000], "assistant": reply[:2000],
-                          "response_guard": {key: response_guard[key] for key in ("recovery_signature", "recovery_count")
-                                             if response_guard and key in response_guard}})
-            if catalog_steps:
-                pairs[-1]["catalog_steps"] = catalog_steps
-            if return_basis:
-                pairs[-1]["return_basis"] = return_basis
-            pairs.sort(key=lambda pair: pair["turn"])
-            connection.execute("INSERT INTO retail_dialogue VALUES (?,?,?) ON CONFLICT(client_user_id,conv_id) DO UPDATE SET payload_json=excluded.payload_json",
-                (client_user_id, conv_id, json.dumps(pairs[-2:], ensure_ascii=False)))
+        self.finish_dialogue(client_user_id, conv_id, turn, message, reply, response_guard=response_guard,
+                             catalog_steps=catalog_steps, return_basis=return_basis)
+
+    def finish_dialogue(self, client, conv, turn, message, reply, *, rows=None, response_guard=None,
+                        catalog_steps=None, return_basis=None):
+        """Atomically publish guarded dialogue and close any previously opened journal."""
+        with self._tx() as con:
+            journal = self._has_journal(con, client, conv, turn)
+            if journal:
+                previous = con.execute("SELECT payload_json FROM retail_dialogue WHERE client_user_id=? AND conv_id=?",
+                                       (client, conv)).fetchone()
+                published = next((p for p in json.loads(previous[0]) if p["turn"] == turn), None) if previous else None
+                if published and (published["user"], published["assistant"]) != (message[:2000], reply[:2000]):
+                    raise JournalConflict("conflicting visible dialogue")
+            else:
+                published = None
+            if rows is None and journal:
+                rows = [{"role": "user", "kind": "user", "content": [{"type": "text", "text": message}]},
+                        {"role": "assistant", "kind": "assistant", "content": [{"type": "text", "text": reply}]}]
+            if rows is not None:
+                if journal or any(r["kind"] == KIND for r in rows):
+                    public = [(r["kind"], self._public_text(r["kind"], r["content"])) for r in rows
+                              if r["kind"] in {"user", "assistant"}]
+                    if public != [("user", message), ("assistant", reply)]:
+                        raise JournalConflict("guarded reply and journal close disagree")
+                self._save_messages(con, client, conv, turn, rows, journal)
+            if published is None:
+                self._save_visible(con, client, conv, turn, message, reply, response_guard, catalog_steps, return_basis)
+
+    @staticmethod
+    def _save_visible(connection, client_user_id, conv_id, turn, message, reply, response_guard,
+                      catalog_steps, return_basis):
+        row = connection.execute("SELECT payload_json FROM retail_dialogue WHERE client_user_id=? AND conv_id=?",
+            (client_user_id, conv_id)).fetchone()
+        pairs = json.loads(row["payload_json"]) if row else []
+        pairs = [p for p in pairs if p.get("turn") != turn]
+        pairs.append({"turn": turn, "user": message[:2000], "assistant": reply[:2000],
+                      "response_guard": {key: response_guard[key] for key in ("recovery_signature", "recovery_count")
+                                         if response_guard and key in response_guard}})
+        if catalog_steps:
+            pairs[-1]["catalog_steps"] = catalog_steps
+        if return_basis:
+            pairs[-1]["return_basis"] = return_basis
+        pairs.sort(key=lambda pair: pair["turn"])
+        connection.execute("INSERT INTO retail_dialogue VALUES (?,?,?) ON CONFLICT(client_user_id,conv_id) DO UPDATE SET payload_json=excluded.payload_json",
+            (client_user_id, conv_id, json.dumps(pairs[-2:], ensure_ascii=False)))
 
     def save_turn_messages(self, client_user_id: str, conv_id: str, turn: int,
                            rows: List[Dict[str, Any]]) -> None:
-        """整轮写入完整消息（含工具调用与结果）；同一轮重复收口时整体替换，日志只追加。"""
-        with self._tx() as connection:
-            connection.execute("DELETE FROM conversation_log WHERE client_user_id=? AND conv_id=? AND turn=?",
-                               (client_user_id, conv_id, int(turn)))
-            row = connection.execute("SELECT COALESCE(MAX(seq),0) FROM conversation_log"
-                                     " WHERE client_user_id=? AND conv_id=?", (client_user_id, conv_id)).fetchone()
-            seq = int(row[0])
-            for item in rows:
-                seq += 1
-                connection.execute(
-                    "INSERT INTO conversation_log VALUES (?,?,?,?,?,?,?,?,?)",
-                    (client_user_id, conv_id, seq, int(turn), item["role"], item["kind"], item.get("agent"),
-                     json.dumps(item["content"], ensure_ascii=False, default=str), _now()))
+        with self._tx() as con:
+            self._save_messages(con, client_user_id, conv_id, turn, rows,
+                                self._has_journal(con, client_user_id, conv_id, turn))
+
+    @staticmethod
+    def _has_journal(con, client, conv, turn):
+        return con.execute("SELECT 1 FROM conversation_log WHERE client_user_id=? AND conv_id=? AND turn=? "
+                           "AND kind=? LIMIT 1", (client, conv, turn, KIND)).fetchone() is not None
+
+    @staticmethod
+    def _append_rows(con, client, conv, turn, rows):
+        seq = con.execute("SELECT COALESCE(MAX(seq),0) FROM conversation_log WHERE client_user_id=? AND conv_id=?",
+                          (client, conv)).fetchone()[0]
+        for pos, row in enumerate(rows, start=seq + 1):
+            con.execute("INSERT INTO conversation_log VALUES (?,?,?,?,?,?,?,?,?)",
+                        (client, conv, pos, turn, row["role"], row["kind"], row.get("agent"),
+                         json.dumps(row["content"], ensure_ascii=False), _now()))
+
+    @staticmethod
+    def _public_text(kind, blocks):
+        # A compiled user row begins with the host snapshot and may have trailing transient blocks.
+        pos = 1 if kind == "user" and len(blocks) > 1 else 0
+        if len(blocks) <= pos or blocks[pos].get("type") != "text" or not isinstance(blocks[pos].get("text"), str):
+            raise JournalConflict("invalid public dialogue block")
+        return blocks[pos]["text"]
+
+    def _save_messages(self, con, client, conv, turn, rows, journal):
+        if journal:
+            # M may be retried after a previous atomic close. Compare its submitted originals as well.
+            incoming = [r for r in rows if r["kind"] == KIND]
+            if incoming:
+                persisted = con.execute("SELECT content_json FROM conversation_log WHERE client_user_id=? AND "
+                                        "conv_id=? AND turn=? AND kind=? ORDER BY seq", (client, conv, turn, KIND))
+                if [json.loads(r[0]) for r in persisted] != [r["content"] for r in incoming]:
+                    raise JournalConflict("conflicting original exchanges at close")
+            published = {r["kind"]: r for r in rows if r["kind"] in {"user", "assistant"}}
+            if set(published) != {"user", "assistant"} or len([r for r in rows if r["kind"] in published]) != 2:
+                raise JournalConflict("closing a journal requires a user message and a final reply")
+            existing = con.execute("SELECT kind,content_json FROM conversation_log WHERE client_user_id=? AND "
+                                   "conv_id=? AND turn=? AND kind IN ('user','assistant')", (client, conv, turn))
+            for kind, content in existing:
+                row = published.pop(kind, None)
+                if row is None or self._public_text(kind, json.loads(content)) != self._public_text(kind, row["content"]):
+                    raise JournalConflict("conflicting published turn")
+            self._append_rows(con, client, conv, turn, [published[k] for k in ("user", "assistant") if k in published])
+        else:
+            con.execute("DELETE FROM conversation_log WHERE client_user_id=? AND conv_id=? AND turn=?",
+                        (client, conv, turn))
+            self._append_rows(con, client, conv, turn, rows)
+
+    def record_tool_step(self, client, conv, batch, index, action, result=None):
+        """Serialize claims and receipts per logical batch. Never hold the lock across a handler."""
+        turn = batch["turn"]
+        ticket = (batch["plan_id"], batch["task_id"], batch["revision"], turn)
+        with self._tx() as con:
+            records = con.execute("SELECT seq,content_json FROM conversation_log WHERE client_user_id=? AND conv_id=? "
+                                  "AND turn=? AND kind=?", (client, conv, turn, KIND))
+            stored = None
+            seq = None
+            ids = {c["tool_use"]["id"] for c in batch["calls"]}
+            for row in records:
+                content = json.loads(row["content_json"])
+                entry = decode({"turn": turn, "kind": KIND, "content": content})
+                if entry is None:
+                    raise JournalConflict("unrecognized stored tool batch")
+                if batch_key(entry) == batch_key(batch):
+                    if stored is not None:
+                        raise JournalConflict("duplicate tool batch")
+                    stored, seq = entry, row["seq"]
+                elif (batch_key(entry)[:-1] == batch_key(batch)[:-1]
+                      and ids.intersection(c["tool_use"]["id"] for c in entry["calls"])):
+                    raise JournalConflict("reused tool_use_id within a task attempt")
+            if action != "returned":
+                if not self._valid_dag_claim(con, client, conv, ticket):
+                    raise JournalConflict("stale task claim")
+                payload = con.execute("SELECT payload FROM dag_executions WHERE plan_id=?", (ticket[0],)).fetchone()[0]
+                state = json.loads(payload)
+                run = state["runs"][ticket[1]]
+                if (run["attempt"], run["role"], state["bound_user"]) != (batch["attempt"], batch["role"], batch["bound"] or ""):
+                    raise JournalConflict("incorrect task attempt or binding")
+                if con.execute("SELECT 1 FROM conversation_log WHERE client_user_id=? AND conv_id=? AND turn=? "
+                               "AND kind='assistant'", (client, conv, turn)).fetchone():
+                    raise JournalConflict("turn already closed")
+            if stored is None:
+                if action == "returned" or any(c["state"] != "queued" for c in batch["calls"]):
+                    raise JournalConflict("missing original batch registration")
+                stored = copy.deepcopy(batch)
+            def signature(entry):
+                header = {k: v for k, v in entry.items() if k != "calls"}
+                inputs = [c["tool_use"] for c in entry["calls"]]
+                return json.dumps([header, inputs], sort_keys=True, ensure_ascii=False)
+            if signature(stored) != signature(batch):
+                raise JournalConflict("conflicting batch identity or inputs")
+            if not transition(stored["calls"][index], action, result):
+                return
+            if seq is None:
+                self._append_rows(con, client, conv, turn, [{"role":"assistant", "kind":KIND, "agent":batch["role"],
+                                                           "content":[stored]}])
+            else:
+                con.execute("UPDATE conversation_log SET content_json=? WHERE client_user_id=? AND conv_id=? AND seq=?",
+                            (json.dumps([stored], ensure_ascii=False), client, conv, seq))
+
+    def attempt_batches(self, client, conv, plan, run):
+        """Read host-side audit records for one durable claim, independent of the current flag."""
+        with closing(self._connect()) as con:
+            rows = con.execute("SELECT content_json FROM conversation_log WHERE client_user_id=? AND conv_id=? "
+                               "AND turn=? AND kind=? ORDER BY seq", (client, conv, run.turn, KIND))
+            batches = [decode(dict(kind=KIND, turn=run.turn, content=json.loads(r[0]))) for r in rows]
+        return [b for b in batches if b and (b["plan_id"], b["task_id"], b["attempt"], b["role"])
+                == (plan, run.task_id, run.attempt, run.role)]
+
+    def task_tool_messages(self, client, conv, ticket, role, tool_names):
+        """Explicit host-only inspection by a currently claimed task. Ordinary history never uses this."""
+        from agents.retail_tools import TASK_TOOLS, ROLE_TOOLS
+        from core.retail_scheduler import Execution
+
+        with closing(self._connect()) as con:
+            con.execute("BEGIN")
+            if not self._valid_dag_claim(con, client, conv, ticket):
+                return []
+            plan, task, _, turn = ticket
+            row = con.execute("SELECT payload FROM dag_executions WHERE plan_id=?", (plan,)).fetchone()
+            state = Execution.load(json.loads(row[0]))
+            run = state.runs[task]
+            if role != run.role:
+                return []
+            kind = next(n.kind for n in state.plan.nodes if n.id == task)
+            allowed = set(tool_names).intersection(TASK_TOOLS[kind], ROLE_TOOLS[role])
+            messages = []
+            rows = con.execute("SELECT content_json FROM conversation_log WHERE client_user_id=? AND conv_id=? "
+                               "AND turn=? AND kind=? ORDER BY seq", (client, conv, turn, KIND))
+            for row in rows:
+                batch = decode(dict(kind=KIND, turn=turn, content=json.loads(row[0])))
+                if batch:
+                    messages.extend(authorized_exchange(batch, role=role, bound=state.bound_user or None,
+                                                        plan_id=plan, task_id=task, attempt=run.attempt, tools=allowed))
+            return messages
+
+    def unpublished_terminal(self, client, conv, turn, plan_id=None, *, message_hash=None):
+        """Only recover a unique terminal plan with an unclosed tool journal in the specified turn."""
+        from core.retail_scheduler import Execution
+
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                "SELECT DISTINCT d.payload FROM conversation_log j JOIN dag_executions d "
+                "ON d.client=j.client_user_id AND d.conversation=j.conv_id AND d.active=0 "
+                "AND d.plan_id=json_extract(j.content_json,'$[0].plan_id') "
+                "WHERE j.client_user_id=? AND j.conv_id=? AND j.turn=? AND j.kind=? "
+                "AND (? IS NULL OR d.plan_id=?) "
+                "AND (? IS NULL OR json_extract(j.content_json,'$[0].user_input_hash')=?) "
+                "AND NOT EXISTS (SELECT 1 FROM conversation_log f "
+                "WHERE f.client_user_id=j.client_user_id AND f.conv_id=j.conv_id AND f.turn=j.turn AND f.kind='assistant')",
+                (client, conv, turn, KIND, plan_id, plan_id, message_hash, message_hash)).fetchall()
+        return Execution.load(json.loads(rows[0][0])) if len(rows) == 1 else None
+
+    def reconcile_tool_write(self, client, conv, plan, run, target, operation, batches):
+        """Attach an authoritative event to its original call, leaving missing wire receipts absent."""
+        if not operation:
+            return None
+        kind, args, op_id = operation["kind"], operation["args"], operation["op_id"]
+        matches = []
+        for batch in batches:
+            if batch.get("operation_id") != op_id:
+                continue
+            for call in batch["calls"]:
+                tool = call["tool_use"]
+                if call["state"] not in {"started", "returned"} or WRITE_KINDS.get(tool["name"]) != kind:
+                    continue
+                try:
+                    if canonical_args(kind, tool["input"]) != args:
+                        continue
+                except DomainError:
+                    continue
+                if call["state"] == "returned":
+                    value = json.loads(call["result"]["content"])
+                    if not isinstance(value, dict) or value.get("action_status") != "executed" or value.get("op_id") != op_id:
+                        continue
+                matches.append((batch, tool))
+        if len(matches) != 1:
+            return None
+        batch, tool = matches[0]
+        with self._tx() as con:
+            proof = con.execute(
+                "SELECT e.event_id,e.order_id,e.payload_json,a.args_json FROM action_operations a "
+                "JOIN retail_events e ON e.op_id=a.op_id AND e.client_user_id=a.client_user_id AND e.conv_id=a.conv_id "
+                "AND e.retail_user_id=a.retail_user_id AND e.order_id IS a.order_id "
+                "JOIN dag_operations d ON d.op_id=a.op_id "
+                "JOIN sessions s ON s.client_user_id=a.client_user_id AND s.conv_id=a.conv_id "
+                "AND s.retail_user_id=a.retail_user_id WHERE a.client_user_id=? AND a.conv_id=? AND a.op_id=? "
+                "AND a.kind=? AND a.retail_user_id=? AND d.plan_id=? AND d.task_id=? AND e.event_type=?",
+                (client, conv, op_id, kind, batch["bound"], plan, run.task_id, self.executed_event(kind))).fetchall()
+            if len(proof) != 1:
+                return None
+            event = proof[0]
+            payload = json.loads(event["payload_json"])
+            if payload.get("kind") != kind or payload.get("args") != args or json.loads(event["args_json"]) != args:
+                return None
+            if kind == "modify_user_address":
+                if target != batch["bound"] or event["order_id"]:
+                    return None
+            elif (args.get("order_id") != target or event["order_id"] != target or not con.execute(
+                    "SELECT 1 FROM orders WHERE order_id=? AND user_id=?", (target, batch["bound"])).fetchone()):
+                return None
+            for row in con.execute("SELECT seq,content_json FROM conversation_log WHERE client_user_id=? AND conv_id=? "
+                                   "AND turn=? AND kind=?", (client, conv, run.turn, KIND)):
+                stored = decode(dict(turn=run.turn, kind=KIND, content=json.loads(row["content_json"])))
+                if stored and batch_key(stored) == batch_key(batch):
+                    slot = next(c for c in stored["calls"] if c["tool_use"]["id"] == tool["id"])
+                    if slot["state"] == "started":
+                        slot.update(outcome="success", event_ref=f"event:{event['event_id']}")
+                        con.execute("UPDATE conversation_log SET content_json=? WHERE client_user_id=? AND conv_id=? "
+                                    "AND seq=?", (json.dumps([stored], ensure_ascii=False), client, conv, row["seq"]))
+                    return event["event_id"]
+        return None
 
     def conversation_log(self, client_user_id: str, conv_id: str) -> List[Dict[str, Any]]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 "SELECT seq, turn, role, kind, agent, content_json FROM conversation_log"
-                " WHERE client_user_id=? AND conv_id=? ORDER BY seq", (client_user_id, conv_id)).fetchall()
+                " WHERE client_user_id=? AND conv_id=? ORDER BY turn, "
+                "CASE kind WHEN 'user' THEN 0 WHEN 'assistant' THEN 2 ELSE 1 END,seq",
+                (client_user_id, conv_id)).fetchall()
         return [{"seq": r["seq"], "turn": r["turn"], "role": r["role"], "kind": r["kind"], "agent": r["agent"],
                  "content": json.loads(r["content_json"])} for r in rows]
 
@@ -1786,7 +2021,7 @@ class RetailStore:
             return False
         state = json.loads(row["payload"])
         run = state["runs"].get(task_id) or {}
-        return state["bound_user"] == row["retail_user_id"] and run.get("turn") == turn and run.get("status") == "running"
+        return state["bound_user"] == (row["retail_user_id"] or "") and run.get("turn") == turn and run.get("status") == "running"
 
     def prepared_for_task(self, plan_id, task_id, turn):
         with closing(self._connect()) as connection:

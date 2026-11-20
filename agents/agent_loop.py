@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import inspect
 import json
 import logging
@@ -14,6 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from core.dag_tool_log import ToolBatch
 from agents.tools import validate_tool_input
 from monitor import live_events
 
@@ -153,6 +155,8 @@ async def _run_tool_loop(
     knowledge_hits = 0
     max_rounds = max(1, int(getattr(agent, "max_tool_rounds", 3) or 3))
     per_response = getattr(agent, "max_tool_uses_per_response", None)
+    logging_dag = bool(getattr(req, "dag_attempt", 0) and req.dag_log_mode != "off")
+    batch_no = 0
     revisions_left = 1
     serial_read = set(getattr(agent, "serial_read_tools", ()) or ())
 
@@ -166,7 +170,7 @@ async def _run_tool_loop(
                 "max_tokens": agent.profile.max_tokens,
                 "temperature": agent.profile.temperature,
                 "system": system,
-                "messages": list(messages),
+                "messages": deepcopy(messages) if logging_dag else list(messages),
             }
             if tools:
                 request["tools"] = [{"name": s.name, "description": s.description,
@@ -200,6 +204,8 @@ async def _run_tool_loop(
             assistant_blocks = plain_blocks(resp.content)
             messages.append({"role": "assistant", "content": assistant_blocks})
             tool_results = []
+            batch_no += 1
+            batch = ToolBatch(req, agent_name, batch_no, assistant_blocks) if logging_dag else None
             # 供应商可能忽略单工具参数；仅纯只读批次可串行消费，写入仍逐次限制。
             read_batch = all(block_value(b, "name") in serial_read for b in tool_uses)
             for index, block in enumerate(tool_uses):
@@ -243,6 +249,8 @@ async def _run_tool_loop(
                     if reason or not_executed:
                         value = {"success": False, "error": error_text}
                     else:
+                        if batch:
+                            batch.step(index, "started")
                         try:
                             value = spec.handler(req, args)
                             if inspect.isawaitable(value):
@@ -250,8 +258,12 @@ async def _run_tool_loop(
                             tools_used.append(name)
                             if isinstance(value, dict) and "success" in value:
                                 result_success = bool(value.get("success"))
+                            if batch:
+                                original = {"type": "tool_result", "tool_use_id": tool_use_id,
+                                            "content": json.dumps(value, ensure_ascii=False, default=str)}
+                                batch.step(index, "returned", original)
                             for hook in hooks:
-                                hook.post_tool(ctx, name, args, value)
+                                hook.post_tool(ctx, name, args, deepcopy(value) if batch else value)
                         except Exception as ex:
                             if stop_check(req, ex):
                                 raise
@@ -262,6 +274,8 @@ async def _run_tool_loop(
                             # 结果不明的工具调用交由钩子登记，避免重放。
                             for hook in hooks:
                                 hook.on_tool_error(ctx, name, args, ex)
+                if batch and (skipped or not_executed or blocked_by):
+                    batch.step(index, "blocked")
                 latency = round((time.monotonic() - tool_t0) * 1000, 1)
                 if not error_text and isinstance(value, dict):
                     error_text = str(value.get("error", "") or "")
@@ -294,7 +308,7 @@ async def _run_tool_loop(
                 tool_results.append({"type": "tool_result", "tool_use_id": tool_use_id,
                                      "content": json.dumps(value, ensure_ascii=False, default=str)})
             messages.append({"role": "user", "content": tool_results})
-            if transcript is not None:
+            if transcript is not None and not logging_dag:
                 # 只记录完整的“调用＋结果”往返，保证回放时消息成对出现。
                 transcript.append({"agent": agent_name, "assistant": assistant_blocks, "results": tool_results})
             for hook in hooks:

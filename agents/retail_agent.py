@@ -339,6 +339,7 @@ class RetailService:
         fact_client: Any = None,
         publish_revision: bool = False,
         plan_client: Any = None,
+        dag_log_mode: str = "off",
         conversation_context_enabled: bool = False,
         recent_conversation_turns: int = DEFAULT_RECENT_TURNS,
     ):
@@ -352,6 +353,9 @@ class RetailService:
         self.skill_library = skill_library
         # 为空时沿用两轮可见窗口（消融对照）；否则由完整消息日志编排上下文。
         self.context_engine = context_engine
+        if dag_log_mode not in {"off", "m", "j"}:
+            raise ValueError("dag_log_mode must be off, m or j")
+        self.dag_log_mode = dag_log_mode
         self.conversation_context_enabled = conversation_context_enabled
         if recent_conversation_turns not in (3, 4, 5):
             raise ValueError("recent_conversation_turns must be 3, 4 or 5")
@@ -721,6 +725,7 @@ class RetailService:
             live_events.emit("context", "compile", compaction=compaction, state=state, user_blocks=user_content)
             # 完整历史已在消息中，不再注入背景消息对；各角色按自身工具集渲染同一份日志。
             request.context = ""
+            request.dag_log_mode = self.dag_log_mode
             request.transcript = []
             request.spans = []
             turn_extra: List[Dict[str, Any]] = []
@@ -968,8 +973,7 @@ class RetailService:
             return_basis["user"] = current_bound_user
             if len(pending_after) == 1:
                 return_basis["op_id"] = pending_after[0]["op_id"]
-        self.store.save_visible_turn(client_user_id, conv_id, turn, message, text, response_guard=guarded.record,
-                                     catalog_steps=catalog_steps, return_basis=return_basis)
+        log_rows = None
         if self.context_engine is not None and context.get("user_content"):
             # 模型看到的是守卫后的最终回复，与用户实际看到的一致。
             self.context_engine.calibrate(client_user_id, conv_id, request.spans or [])
@@ -982,8 +986,10 @@ class RetailService:
                 context["snapshot"]["dialogue_audience"] = conversation.audience
             if conversation:
                 context["user_content"] = self.context_engine.user_blocks(turn, context["snapshot"], message)
-            self.store.save_turn_messages(client_user_id, conv_id, turn, self.context_engine.log_rows(
-                context["user_content"] + list(context.get("turn_extra") or []), request.transcript or [], text))
+            log_rows = self.context_engine.log_rows(
+                context["user_content"] + list(context.get("turn_extra") or []), request.transcript or [], text)
+        self.store.finish_dialogue(client_user_id, conv_id, turn, message, text, rows=log_rows,
+                                   response_guard=guarded.record, catalog_steps=catalog_steps, return_basis=return_basis)
         latency_ms = (time.monotonic() - t0) * 1000
         new_events = [
             item for item in self.store.list_events(client_user_id, conv_id)
@@ -1045,21 +1051,10 @@ class RetailService:
 
     def _loaded_skills(self, client_user_id, conv_id, rows=None) -> List[str]:
         """本会话此前成功加载过的 Skill；只来自消息日志中的真实工具结果。"""
-        names: List[str] = []
+        from core.dag_tool_log import loaded_skills
         if rows is None:
             rows = self.store.conversation_log(client_user_id, conv_id)
-        for row in rows:
-            if row["kind"] != "tool_result":
-                continue
-            for block in row["content"]:
-                try:
-                    value = json.loads(block.get("content") or "{}")
-                except (TypeError, ValueError):
-                    continue
-                if isinstance(value, dict) and value.get("success") and value.get("skill") and "playbook" in value:
-                    if value["skill"] not in names:
-                        names.append(value["skill"])
-        return names
+        return loaded_skills(rows, self.store.bound_user_id(client_user_id, conv_id))
 
     def _user_order_ids(self, client_user_id, conv_id, message, rows=None) -> set:
         """本会话用户消息中出现过的订单号（含本轮），只用于允许复述，不作为订单事实证据。"""
@@ -1071,7 +1066,11 @@ class RetailService:
             rows = self.store.conversation_log(client_user_id, conv_id)
         for row in rows:
             if row["kind"] == "user":
-                texts += [b.get("text", "") for b in row["content"] if b.get("type") == "text"]
+                blocks = row["content"]
+                if len(blocks) > 1 and str(blocks[0].get("text", "")).startswith("[Session state"):
+                    blocks = blocks[1:2]
+                if len(blocks) == 1 and blocks[0].get("type") == "text":
+                    texts.append(blocks[0].get("text", ""))
         return {_order_id(m.group()) for text in texts for m in _ORDER_ID.finditer(text or "")}
 
     def _order_evidence(self, client_user_id, conv_id, text, bound_user_id, pending):
