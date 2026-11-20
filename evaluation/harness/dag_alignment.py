@@ -1,5 +1,8 @@
 """Align model-local task names to gold semantics. Execution order is graded separately."""
 from collections import Counter
+import re
+
+from mcp_tools.retail_store import normalize_order_id
 
 from core.retail_dag import Plan
 from core.retail_subtasks import _ordered_tasks
@@ -14,7 +17,14 @@ def _quote_matches(actual, expected):
     return bool(actual and (actual in expected or expected in actual))
 
 
-def align_plan(case, raw, mode):
+def _target(kind, value, version):
+    if (version == "v2" and kind in {"order_lookup", "billing_lookup", "return_change", "order_change"}
+            and isinstance(value, str) and re.fullmatch(r"[#＃]?W[0-9]+", value, re.I)):
+        return normalize_order_id(value)
+    return value
+
+
+def align_plan(case, raw, mode, version="v1"):
     rows = raw if isinstance(raw, list) else []
     counts = Counter(r["id"] for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str))
     unique = {r["id"]: r for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str)
@@ -29,7 +39,8 @@ def align_plan(case, raw, mode):
                 if ref["kind"] != row.get("kind"):
                     continue
                 if mode == "dag":
-                    if (ref["target"], ref["output"]) != (row.get("target", ""), row.get("output")):
+                    if (_target(ref["kind"], ref["target"], version) != _target(row["kind"], row.get("target", ""), version)
+                            or ref["output"] != row.get("output")):
                         continue
                 elif (not _quote_matches(quote, ref["quote"]) or
                         (ref["target"] and ref["target"] not in quote) or
@@ -72,7 +83,9 @@ def align_plan(case, raw, mode):
     return aligned, {key for key, opts in candidates.items() if opts}
 
 
-def grade_plan(case, rows, mode="dag"):
+def grade_plan(case, rows, mode="dag", *, version="v1"):
+    if version not in {"v1", "v2"}:
+        raise ValueError("Unknown scoring version")
     if mode not in {"dag", "subintent"}:
         raise ValueError("keyword routing does not emit a task plan")
     reason = ""
@@ -83,7 +96,7 @@ def grade_plan(case, rows, mode="dag"):
             _ordered_tasks(rows, case.message, mode)
     except (ValueError, TypeError) as exc:
         reason = str(exc)
-    mapping, ambiguous = align_plan(case, rows, mode)
+    mapping, ambiguous = align_plan(case, rows, mode, version)
     rows = rows if isinstance(rows, list) else []
     gold = {n.id: n for n in case.nodes}
     result = dict(nodes_expected=len(gold), nodes_predicted=len(rows), nodes_correct=len(mapping),

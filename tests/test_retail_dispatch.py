@@ -26,6 +26,19 @@ def router(mode, rows):
                              intent_recognizer=IntentRecognizer(model="offline", client=client))
 
 
+def legacy_assignment_router(rows):
+    """Exercise the retained role-assignment/permission path with already extracted v1 tasks."""
+    from types import SimpleNamespace
+    from core.intent_recognizer import UrgencyLevel
+    app = router("dag", rows)
+    async def recognized(*args, **kwargs):
+        app._intent_recognizer.client.calls += 1
+        return SimpleNamespace(intent=IntentCategory.QUERY, intent_group="query", urgency=UrgencyLevel.LOW,
+                               confidence=1, entities={}, subtasks=rows)
+    app._intent_recognizer.recognize = recognized
+    return app
+
+
 @pytest.mark.parametrize("raw,reason", [
     (None, "missing_or_oversize"), ([node("t", "product_info")] * 13, "missing_or_oversize"),
     ([node("a", "product_info"), node("a", "order_change")], "invalid_subtask_id"),
@@ -73,7 +86,7 @@ def test_personal_data_and_writes_stay_with_one_primary():
 
 def test_roles_receive_verified_dependencies_and_wait_for_failed_predecessor():
     rows = [node("spec", "product_info"), node("terms", "return_policy", "spec")]
-    app = router("dag", rows)
+    app = legacy_assignment_router(rows)
     req = Request("product_info return_policy", "u", "c", turn=1)
 
     async def run():
@@ -134,7 +147,7 @@ def test_modes_are_isolated_in_prompts_cache_and_harness():
 def test_general_retry_of_a_helper_preserves_assignment_and_read_only_permissions(monkeypatch):
     from agents.agent_orchestrator import AgentResponse
 
-    app = router("dag", [node("a", "product_info"), node("b", "order_change", "a")])
+    app = legacy_assignment_router([node("a", "product_info"), node("b", "order_change", "a")])
     req = Request("product_info order_change", "u", "c", turn=1)
     general = app._best_agent(AgentType.GENERAL)
     seen = []

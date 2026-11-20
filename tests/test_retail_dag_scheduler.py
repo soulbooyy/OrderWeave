@@ -61,7 +61,7 @@ def test_repeated_specialist_through_service(workflow, tmp_path, monkeypatch):
 
     rows = [dict(node("v"), quote="variants 4768869376", target="4768869376", output="variants"),
             dict(node("o", "billing_lookup", "v"), quote="read #W6564160", target="#W6564160", output="item_ids"),
-            dict(node("s", "product_info", "v", "o"), quote="which color?", output="color")]
+            dict(node("s", "product_info", "v", "o"), quote="which color?", target="", output="color")]
     store = RetailStore(tmp_path / "retail.sqlite", SEED_PATH)
     seed = json.loads(SEED_PATH.read_text())
     uid = seed["orders"]["#W6564160"]["user_id"]
@@ -302,7 +302,7 @@ def test_order_count_branches_with_real_tool_loop(tmp_path,workflow,failed,monke
     rows = [dict(node("order","order_lookup"),quote=read,target=oid,output="purchased_item_count")]
     for key,quote,target,field in [("mouse",yes,"7420906769","sensor_type"),("helmet",no,"1665571435","ventilation")]:
         rows.append(dict(node(key,"product_info","order"),quote=quote,target=target,output=field,
-                         run_if={"source":"order","quote":clause}))
+                         run_if={"source":"order","branch":"then" if quote == yes else "else"}))
     app = router("dag",rows)
     monkeypatch.setitem(OWNERS,"order_lookup","billing")
     db = RetailStore(tmp_path / "db.sqlite",SEED_PATH)

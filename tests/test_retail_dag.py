@@ -125,11 +125,13 @@ def test_real_entry_point_never_discards_explicit_condition():
     from agents.agent_orchestrator import Request
     from tests.test_retail_dispatch import router
 
-    for guard in ({"source": "n", "quote": CLAUSE}, {"source": "n", "expr": "n.count > 2"}):
+    message = COUNT_QUERY.replace("鼠标规格", "变体111111的颜色").replace("头盔规格", "变体222222的颜色")
+    for guard in ({"source": "n", "branch": "then"}, {"source": "n", "expr": "n.count > 2"}):
         rows = conditional_rows()
-        rows[1]["run_if"] = guard
+        rows[1].update(quote="查变体111111的颜色", target="111111", output="color", run_if=guard)
+        rows[2].update(quote="查变体222222的颜色", target="222222", output="color", run_if={"source":"n","branch":"else"})
         app = router("dag", rows)
-        result = asyncio.run(app.run(Request(COUNT_QUERY, "client", "conv")))
+        result = asyncio.run(app.run(Request(message, "client", "conv")))
         assert not result.success and not result.tool_traces
         if "expr" in guard:
             assert result.routing_reason.startswith("dag_contract:")
@@ -225,7 +227,8 @@ def test_task_permissions_through_tool_loop(tmp_path, monkeypatch, kind, role, a
         db.find_user_by_email("u", "c", store_data["users"][order["user_id"]]["email"])
     before = db.list_events("u", "c")
     actual_calls = []
-    app = router("dag", [node("t", kind)])
+    from tests.test_retail_dispatch import legacy_assignment_router
+    app = legacy_assignment_router([node("t", kind)])
     tools = retail_tools(db)
     original = tools[tool].handler
 
@@ -277,7 +280,8 @@ def test_support_mode_fallback_preserves_original_tool_limit_and_hook(language, 
     from agents.retail_multi_agent import RetailTechnicalAgent
     from tests.test_retail_dispatch import router
 
-    app = router("dag", [node("spec")])
+    from tests.test_retail_dispatch import legacy_assignment_router
+    app = legacy_assignment_router([node("spec")])
     general = app._best_agent(AgentType.GENERAL)
     technical = RetailTechnicalAgent(general._client, "offline", language=language, support_enabled=True)
     app._pool[AgentType.TECHNICAL] = [technical]

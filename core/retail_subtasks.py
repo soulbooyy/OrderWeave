@@ -19,22 +19,16 @@ PRIVATE = WRITES | {"order_lookup", "billing_lookup"}
 def extraction_instruction(mode: str) -> str:
     if mode == "keyword":
         return ""
-    edges = (' Include "depends_on" (array of node ids, [] when independent). Add an edge only if the '
-             'user requires that order or the result is needed. Mention order alone is not a dependency. '
-             'Every node needs output (one field): order_lookup/billing_lookup: order_id, status, purchased_item_count, '
-             'item_ids; billing_lookup also payment_type. product_info: variants, ventilation, sensor_type, size, color. '
-             'Policy: policy. Changes: executed. Use target for a literal order/product/variant identifier in quote, '
-             'or leave empty for a prerequisite target. For if/else, extract separate action nodes whose quotes are '
-             'the exact branch actions, with run_if={source: predecessor id, quote: full verbatim conditional clause} '
-             'on each. Give their source the output used by the condition. Never discard an unsupported condition.'
-             if mode == "dag" else "")
+    if mode == "dag":
+        from core.dag_planning import output_instruction
+        return output_instruction()
     return ('\nIn the same JSON object also include "subtasks", in mention order. Each has "id" (t1, t2, ...), '
             '"kind", and "quote" (a verbatim span of the current user message). Split only active requests. '
             'Exclude negations, abandoned actions, hypothetical future changes, and background. '
             'Return [] for unsupported, unclear, or purely social requests. Use order_lookup for personal order '
             'or delivery facts, billing_lookup for personal payment/refund facts, product_info for public catalog '
             'specs, general_policy for general policy, return_policy for return terms or options, return_change '
-            'for a requested return/exchange and order_change for the other supported retail changes.' + edges)
+            'for a requested return/exchange and order_change for the other supported retail changes.')
 
 
 @dataclass(frozen=True)

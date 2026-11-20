@@ -1185,12 +1185,22 @@ class AgentOrchestrator:
                     if req.catalog_steps and getattr(self, "routing_mode", "keyword") == "dag":
                         recognition_history = [*(recognition_history or []), {"role": "system", "content":
                             "Previous verified order lookup and deferred catalog requests: " + json.dumps(req.catalog_steps, ensure_ascii=False)
-                            + ". If the current user continues one, extract a product_info node quoting this message "
-                            "and put the previous node id in its continues field. Use continues=null for a new request, "
-                            "changed condition or a required fresh order lookup. Never resume a cancelled task."}]
+                            + ". Use this only for context. Quote actions from the current message."}]
                     intent_result = await self._intent_recognizer.recognize(
                         req.message, history=recognition_history
                     )
+                if retail_mode and self.routing_mode == "dag":
+                    diagnostics = getattr(intent_result, "diagnostics", {})
+                    status = diagnostics.get("plan_status")
+                    if status:
+                        req.retail_routing = {**(req.retail_routing or {}), "plan_status": status,
+                                              "plan_attempts": diagnostics.get("attempts", [])}
+                    if status and status not in {"first_pass", "corrected"}:
+                        return OrchestratorResult(
+                            request_id=req.request_id, agent_type=AgentType.RETAIL, intent=intent_result.intent,
+                            success=False, routing_reason=f"dag_contract:{status}",
+                            response=("Please clarify the requested actions and conditions." if language == "en"
+                                      else "请明确需要办理的事项和条件。"))
                 subtasks = getattr(intent_result, "subtasks", None)
                 req.intent  = intent_result.intent
                 req.intent_group = intent_result.intent_group

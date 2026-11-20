@@ -7,6 +7,7 @@ import operator
 import re
 from uuid import uuid4
 
+from core.dag_schema import OUTPUTS
 from core.retail_subtasks import Task, _ordered_tasks
 
 
@@ -30,14 +31,6 @@ _TRANSITIONS = {
 }
 
 
-# Only server-defined fields may cross a dependency edge.
-OUTPUTS = {
-    "order_lookup": {"order_id", "status", "purchased_item_count", "item_ids"},
-    "billing_lookup": {"order_id", "status", "purchased_item_count", "payment_type", "item_ids"},
-    "product_info": {"variants", "ventilation", "sensor_type", "size", "color"},
-    "return_policy": {"policy"}, "general_policy": {"policy"},
-    "return_change": {"executed"}, "order_change": {"executed"},
-}
 _COMPARISONS = {"至少": operator.ge, "超过": operator.gt, "少于": operator.lt,
                 "至多": operator.le, "等于": operator.eq, "at least": operator.ge,
                 "more than": operator.gt, "fewer than": operator.lt, "at most": operator.le,
@@ -45,7 +38,7 @@ _COMPARISONS = {"至少": operator.ge, "超过": operator.gt, "少于": operator
 _COUNT = re.compile(r"(?:订单(?:中)?(?P<zh>至少|至多|超过|少于|等于)(?:有)?\s*(?P<n>[0-9]{1,6})\s*件商品"
                     r"|(?:(?:the )?order (?:has|contains)|there are) (?P<en>at least|more than|fewer than|at most|exactly) "
                     r"(?P<m>[0-9]{1,6}|one|two|three|four|five|six|seven|eight|nine|ten) (?:purchased )?(?:items?|products?))", re.I)
-_VENTILATION = re.compile(r"(?:通风等级(?:为|是)|(?:the )?ventilation(?: level)? is )"
+_VENTILATION = re.compile(r"(?:通风等级(?:为|是)?|(?:the )?ventilation(?: level)? is )"
                           r"(low|medium|high|低|中|高)", re.I)
 
 
@@ -76,6 +69,14 @@ class Node(Task):
     run_if: Condition | None
 
 
+CONDITIONAL = re.compile(r"(?:如果|if )(.+?)(?:[，,]\s*(?:就|then )?|就)(.+?)"
+                         r"(?:[，,;；]\s*(?:否则|otherwise |else )(.+))?", re.I)
+
+
+def condition_sentences(message):
+    return [part.strip() for part in re.split(r"[。！？.!?:：\n]+", message) if part.strip()]
+
+
 def _condition(raw, task, message, sources):
     if not isinstance(raw, dict) or set(raw) != {"source", "quote"}:
         raise ValueError("invalid_condition")
@@ -84,11 +85,10 @@ def _condition(raw, task, message, sources):
         raise ValueError("invalid_condition_source")
     # Require a full user-authored conditional sentence. The model cannot pick an
     # operator, constant, or branch polarity by merely citing part of a sentence.
-    sentences = [part.strip() for part in re.split(r"[。！？.!?:：\n]+", message)]
+    sentences = condition_sentences(message)
     if sentences.count(quote.rstrip("。！？.!?")) != 1:
         raise ValueError("unverified_condition_quote")
-    match = re.fullmatch(r"(?:如果|if )(.+?)[，,]\s*(?:就|then )?(.+?)"
-                         r"(?:[，,;；]\s*(?:否则|otherwise |else )(.+))?", quote.rstrip("。！？.!?"), re.I)
+    match = CONDITIONAL.fullmatch(quote.rstrip("。！？.!?"))
     if not match:
         raise ValueError("unsupported_condition")
     predicate, yes, no = match.groups()
@@ -157,7 +157,13 @@ class Plan:
                     (target and not re.search(r"(?<![a-zA-Z0-9_-])" + re.escape(target)
                                               + r"(?![a-zA-Z0-9_-])", task.quote))):
                 raise ValueError("unverified_target")
-            condition = _condition(row["run_if"], task, message, nodes) if "run_if" in row else None
+            condition = None
+            if "run_if" in row:
+                try:
+                    condition = _condition(row["run_if"], task, message, nodes)
+                except ValueError as exc:
+                    exc.task_id = task.id
+                    raise
             nodes[task.id] = Node(task.id, task.kind, task.quote, task.depends_on, output, target, condition)
         for task in nodes.values():
             if task.run_if:

@@ -159,6 +159,12 @@ def build_intent_prompt(
             "computer troubleshooting are unsupported. "
             "Missing product or identity details do not erase an explicit action or human request."
         )
+    if retail_mode and routing_mode == "dag":
+        from core.dag_planning import output_instruction
+        recent = json.dumps((history or [])[-3:], ensure_ascii=False)
+        return (f"{contract}\nUse history for disambiguation only: {recent}\n"
+                + output_instruction() + f'\nUser message: "{message}"')
+
     routing_instruction = ""
     if retail_mode and routing_mode != "keyword":
         from core.retail_subtasks import extraction_instruction
@@ -428,6 +434,9 @@ class IntentRecognizer:
             "final_confidence": confidence,
         }
 
+        if getattr(self, "retail_mode", False) and getattr(self, "routing_mode", "keyword") == "dag":
+            diagnostics["plan_status"] = (llm.get("failure_kind") if llm_failed else
+                                          "corrected" if len(diagnostics["attempts"]) == 2 else "first_pass")
         result = IntentResult(
             intent=intent,
             confidence=confidence,
@@ -447,7 +456,8 @@ class IntentRecognizer:
         if len(self._cache) >= 1000:
             for k in list(self._cache)[:500]:
                 del self._cache[k]
-        self._cache[key] = result
+        if not (llm_failed and getattr(self, "retail_mode", False) and getattr(self, "routing_mode", "keyword") == "dag"):
+            self._cache[key] = result
         return result
 
     # ── 在线学习 ──────────────────────────────────────────────────────────────
@@ -479,24 +489,40 @@ class IntentRecognizer:
         last_error: Optional[Exception] = None
         last_kind = "request_error"
         attempts: List[Dict[str, Any]] = []
+        dag = getattr(self, "retail_mode", False) and getattr(self, "routing_mode", "keyword") == "dag"
+        messages = [{"role": "user", "content": prompt}]
         # 普通请求／解析错误有限重试；硬预算与截断停止由评测守卫向上抛出。
         for attempt in range(2):
             try:
                 resp = await self.client.messages.create(
                     model=self.model,
                     # 分类只需完整JSON，避免默认思考耗尽正文输出额度。
-                    extra_body={"thinking": {"type": "disabled"}},
+                    **({"extra_body": {"thinking": {"type": "disabled"}}} if not dag or self.model.startswith("deepseek") else {}),
                     max_tokens=2048,
                     temperature=0.1,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=messages,
                 )
                 raw = extract_text_content(resp.content)
-                s, e = raw.find("{"), raw.rfind("}") + 1
-                if s < 0 or e <= s:
-                    raise ValueError("模型未返回 JSON 文本")
-                data = json.loads(raw[s:e])
-                if not isinstance(data, dict):
-                    raise ValueError("模型返回的 JSON 不是对象")
+                if dag:
+                    from core.dag_planning import PlanError, parse_plan
+                    try:
+                        data = parse_plan(raw, message)
+                    except PlanError as error:
+                        last_kind, last_error = error.stage, error
+                        attempts.append({"attempt": attempt + 1, "status": error.stage, "errors": error.issues})
+                        if attempt == 0:
+                            messages = [*messages, {"role": "assistant", "content": raw or "(empty response)"},
+                                        {"role": "user", "content": "Regenerate the entire JSON for the original "
+                                         "unchanged user request. Validation errors: "+json.dumps(error.issues, ensure_ascii=False)}]
+                            continue
+                        break
+                else:
+                    s, e = raw.find("{"), raw.rfind("}") + 1
+                    if s < 0 or e <= s:
+                        raise ValueError("模型未返回 JSON 文本")
+                    data = json.loads(raw[s:e])
+                    if not isinstance(data, dict):
+                        raise ValueError("模型返回的 JSON 不是对象")
                 raw_intent = data.get("intent")
                 if not isinstance(raw_intent, str) or not raw_intent.strip():
                     raise ValueError("模型未返回 intent 字段")
@@ -520,11 +546,14 @@ class IntentRecognizer:
             except Exception as ex:
                 # 预算停止与单轮请求上限必须向上抛出，不能被降级为 OTHER。
                 from evaluation.retail_budget import (
-                    BudgetStopExceeded,
+                    BudgetExceeded, BudgetStopExceeded,
                     TurnRequestLimitExceeded,
                 )
 
-                if isinstance(ex, (BudgetStopExceeded, TurnRequestLimitExceeded)):
+                if isinstance(ex, (BudgetStopExceeded, TurnRequestLimitExceeded)) or (dag and isinstance(ex, BudgetExceeded)):
+                    if dag:
+                        ex.plan_status = "budget_stop" if isinstance(ex, BudgetExceeded) else "request_limit"
+                        ex.plan_attempts = attempts
                     raise
                 last_error = ex
                 last_kind = (
@@ -539,6 +568,8 @@ class IntentRecognizer:
                         "error": str(ex)[:200],
                     }
                 )
+                if dag:
+                    break
                 if attempt == 0:
                     logger.warning(f"LLM 识别失败，重试一次: {ex}")
         logger.warning(f"LLM 识别失败: {last_error}")
@@ -810,7 +841,7 @@ class IntentRecognizer:
         if getattr(self, "routing_mode", "keyword") != "keyword":
             payload["routing_mode"] = self.routing_mode
             if self.routing_mode == "dag":
-                payload["task_contract_version"] = 1
+                payload["task_contract_version"] = 2
         if history:
             payload["history"] = [
                 {

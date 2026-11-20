@@ -110,6 +110,11 @@ class Script:
                     {k: n[k] for k in ("id", "kind", "quote")} for n in rows]
                 if self.calls["classifier"] == 1:
                     self.first_plan = packet["subtasks"]
+                if self.mode == "dag":
+                    packet["subtasks"] = [
+                        {**row, "run_if": {"source": row["run_if"]["source"], "branch":
+                         "else" if row["run_if"]["quote"].endswith("otherwise "+row["quote"]) else "then"}}
+                        if "run_if" in row else row for row in rows]
             answer = json.dumps(packet)
         return response(dict(type="text", text=answer))
 
