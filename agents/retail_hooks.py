@@ -59,6 +59,10 @@ class PrimaryOnlyHook(LoopHook):
 
     def pre_tool(self, ctx, name, args) -> Optional[str]:
         agent = ctx.agent
+        if ctx.req.dag_tool_limit is not None:
+            if name not in agent._tools_for_request(ctx.req):
+                return ("This task does not permit that tool." if _en(ctx) else "当前任务无权调用此工具。")
+            return None
         if agent._is_primary(ctx.req) or name in agent._supporting_read_only():
             return None
         return ("Only the primary agent of this request may bind identity, prepare or submit a return, "

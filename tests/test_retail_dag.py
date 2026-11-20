@@ -188,3 +188,141 @@ def test_checked_state_changes_require_scoped_business_records(tmp_path):
     evidence = verify(task, [t], events=store.list_events("client", "conv"), bound_user=user["user_id"])
     assert evidence.facts["op_id"] == prepared["op_id"]
     assert verify(task, [t], events=store.list_events("client", "other"), bound_user=user["user_id"]) is None
+
+
+@pytest.mark.parametrize("kind,role,assigned,tool,expected", [
+    ("billing_lookup", "billing", None, "return_delivered_order_items", "denied"),
+    ("product_info", "technical", None, "get_order_details", "denied"),
+    ("product_info", "general", "technical", "get_order_details", "denied"),
+    ("billing_lookup", "billing", None, "get_order_details", "unbound"),
+    ("billing_lookup", "billing", None, "get_order_details", "succeeded"),
+])
+def test_task_permissions_through_tool_loop(tmp_path, monkeypatch, kind, role, assigned, tool, expected):
+    import asyncio
+    import json
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from agents.agent_orchestrator import AgentType, Request
+    from agents.retail_tools import retail_tools
+    from evaluation.harness.config import SEED_PATH
+    from mcp_tools.retail_store import RetailStore
+    from tests.test_retail_dispatch import router
+
+    if not SEED_PATH.exists():
+        pytest.skip("requires public retail seed")
+    db = RetailStore(tmp_path / "p.db", SEED_PATH)
+    store_data = json.loads(SEED_PATH.read_text())
+    order = next(iter(store_data["orders"].values()))
+    db.begin_turn("u", "c")
+    if expected == "succeeded":
+        db.find_user_by_email("u", "c", store_data["users"][order["user_id"]]["email"])
+    before = db.list_events("u", "c")
+    actual_calls = []
+    app = router("dag", [node("t", kind)])
+    tools = retail_tools(db)
+    original = tools[tool].handler
+
+    def counted(request, args):
+        actual_calls.append(tool)
+        return original(request, args)
+
+    tools[tool] = replace(tools[tool], handler=counted)
+    app.set_shared_tools(tools)
+    actor = app._best_agent(AgentType(role))
+    seen = []
+
+    async def script(**kwargs):
+        seen.append({s["name"] for s in kwargs["tools"]})
+        if len(seen) == 1:
+            args = {"order_id": order["order_id"]}
+            if tool == "return_delivered_order_items":
+                args.update(item_ids=[order["items"][0]["item_id"]],
+                            payment_method_id=order["payment_history"][0]["payment_method_id"])
+            block = SimpleNamespace(type="tool_use", id="read", name=tool, input=args)
+        else:
+            block = SimpleNamespace(type="text", text="Done.")
+        return SimpleNamespace(content=[block], stop_reason="tool_use" if len(seen) == 1 else "end_turn",
+                               usage=SimpleNamespace(input_tokens=0, output_tokens=0))
+
+    monkeypatch.setattr(actor._client.messages, "create", script)
+
+    async def run():
+        req = Request(kind, "u", "c")
+        await app.prepare_route(req)
+        return await app.execute_role(req, AgentType(role), assigned_role=AgentType(assigned) if assigned else None)
+    response = asyncio.run(run())
+    call, = response.tool_traces
+    assert call["result_success"] is (expected == "succeeded")
+    assert (tool in seen[0]) == (expected != "denied")
+    assert actual_calls == ([] if expected == "denied" else [tool])
+    if expected == "denied":
+        assert call["not_executed"]
+    assert not db.active_pending("u", "c") and db.list_events("u", "c") == before
+
+
+@pytest.mark.parametrize("language", ["en", "zh"])
+def test_support_mode_fallback_preserves_original_tool_limit_and_hook(language, monkeypatch):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from agents.agent_orchestrator import AgentResponse, AgentType, Request
+    from agents.retail_hooks import PrimaryOnlyHook
+    from agents.retail_multi_agent import RetailTechnicalAgent
+    from tests.test_retail_dispatch import router
+
+    app = router("dag", [node("spec")])
+    general = app._best_agent(AgentType.GENERAL)
+    technical = RetailTechnicalAgent(general._client, "offline", language=language, support_enabled=True)
+    app._pool[AgentType.TECHNICAL] = [technical]
+    app.set_shared_tools(dict.fromkeys(("get_item_details", "get_product_details", "get_order_details", "calculate")))
+    req = Request("product_info", "u", "c")
+    general.language = language
+    general.system_prompt = general._compose_system_prompt(language)
+
+    async def handle(request):
+        visible = general._tools_for_request(request)
+        assert set(visible) == {"get_product_details", "calculate"}
+        ctx = SimpleNamespace(req=request, agent=general)
+        for name in ("get_order_details", "get_item_details", "transfer_to_human_agents"):
+            assert PrimaryOnlyHook().pre_tool(ctx, name, {})
+        assert PrimaryOnlyHook().pre_tool(ctx, "get_product_details", {}) is None
+        packet = json.loads(general._build_role_packet(request))
+        duty = packet["retail"]["rules"]
+        assert "get_product_details" in duty and "get_order_details" not in duty
+        assert "primary" not in packet["retail"] and duty in general._build_system_prompt(request)
+        return AgentResponse(AgentType.GENERAL, "checked", True)
+    monkeypatch.setattr(general, "handle", handle)
+
+    async def run():
+        await app.prepare_route(req)
+        await app.execute_role(req, AgentType.GENERAL, assigned_role=AgentType.TECHNICAL)
+        assert req.dag_tool_limit is None
+    asyncio.run(run())
+
+
+def test_coalesced_permissions_cannot_borrow_another_nodes_write():
+    from agents.retail_tools import task_tool_limit
+    tasks = build([node("a", "billing_lookup"), node("b", "return_change", "a")]).nodes
+    common = task_tool_limit(tasks)
+    assert "get_order_details" in common and "return_delivered_order_items" not in common
+    assert "return_delivered_order_items" in task_tool_limit(tasks[1:])
+    assert not task_tool_limit([])
+
+
+def test_default_mode_and_subintent_keep_original_tool_visibility(monkeypatch):
+    import asyncio
+    from agents.agent_orchestrator import AgentResponse, AgentType, Request
+    from agents.retail_runtime import RetailRuntimeConfig
+    from tests.test_retail_dispatch import router
+
+    assert RetailRuntimeConfig.__dataclass_fields__["routing_mode"].default == "keyword"
+    app = router("subintent", [node("t", "billing_lookup")])
+    app.set_shared_tools(dict.fromkeys(("get_order_details", "return_delivered_order_items")))
+    agent = app._best_agent(AgentType.BILLING)
+    req = Request("billing_lookup", "u", "c")
+
+    async def handle(request):
+        assert request.dag_tool_limit is None and "return_delivered_order_items" in agent._tools_for_request(request)
+        return AgentResponse(AgentType.BILLING, "checked", True)
+    monkeypatch.setattr(agent, "handle", handle)
+    asyncio.run(app.run(req))

@@ -41,6 +41,28 @@ RETAIL_STATE_TOOLS = (
     "transfer_to_human_agents",
 )
 RETAIL_ALL_TOOLS = RETAIL_STATE_TOOLS + RETAIL_READ_ONLY_TOOLS
+
+# Server-owned capabilities. The classifier supplies task kinds, never tool names.
+_ORDER_READS = frozenset({"get_order_details", "get_user_details", "calculate"})
+_WRITE_CONTEXT = _ORDER_READS | {"load_skill"}
+_RETURN_ACTIONS = frozenset(tool for tool, kind in WRITE_KINDS.items() if kind in {"return", "exchange"})
+TASK_TOOLS = {
+    "product_info": frozenset({"get_item_details", "get_product_details", "list_all_product_types",
+                               "calculate", "search_knowledge_base"}),
+    "order_lookup": _ORDER_READS, "billing_lookup": _ORDER_READS,
+    "general_policy": frozenset({"load_skill", "search_knowledge_base"}),
+    "return_policy": frozenset({"load_skill", "search_knowledge_base"}),
+    "return_change": _WRITE_CONTEXT | _RETURN_ACTIONS,
+    "order_change": _WRITE_CONTEXT | (WRITE_KINDS.keys() - _RETURN_ACTIONS),
+}
+
+
+def task_tool_limit(tasks):
+    """Until the node scheduler lands, coalesced assignments get their common permissions."""
+    limits = [TASK_TOOLS.get(task.kind, frozenset()) for task in tasks]
+    return frozenset.intersection(*limits) if limits else frozenset()
+
+
 # 支持模式的商品资料角色只保留公开商品查询、必要计算和知识检索；
 # 身份、订单、准备／提交与交接由主执行者和原业务链负责。
 RETAIL_SUPPORT_TECHNICAL_TOOLS = (

@@ -204,6 +204,7 @@ class Request:
     dispatch: Optional[Dispatch] = None
     dispatch_outcomes: dict = field(default_factory=dict)
     dispatch_role: Optional[str] = None
+    dag_tool_limit: Optional[frozenset[str]] = None
     catalog_steps: dict = field(default_factory=dict)
     catalog_followup: dict = field(default_factory=dict)
 
@@ -2025,10 +2026,18 @@ class AgentOrchestrator:
                 raise RuntimeError(f"Unfulfilled dependency: {role} -> {logical_role}")
         req.dispatch_role = logical_role
         try:
+            if self.retail_mode and self.routing_mode == "dag":
+                from agents.retail_tools import task_tool_limit
+
+                req.dag_tool_limit = task_tool_limit(req.dispatch.roles.get(logical_role, ()))
+                if agent.agent_type.value != logical_role:
+                    owner = self._best_agent(AgentType(logical_role))
+                    req.dag_tool_limit &= frozenset(owner._tools_for_request(req) if owner else ())
             response = await agent.handle(req)
             req.dispatch_outcomes[logical_role] = role_outcome(req, response)
             return response
         finally:
+            req.dag_tool_limit = None
             req.dispatch_role = None
 
     def should_fallback(self, req, agent_type, response):

@@ -73,11 +73,15 @@ _SUPPORT_RULES_ZH = """
 - 用户选择退货或人工时，由既有业务流程处理；不承诺退款、真实坐席或工单。
 """
 
-_SHARED_RULES_EN = """
+_PRIMARY_RULE_EN = ("Only the primary agent of this request may bind identity, call a write tool, "
+                    "or record a human handoff. Supporting agents are read-only.")
+_PRIMARY_RULE_ZH = "每轮只有主执行 Agent 可以绑定身份、调用写工具或记录人工交接；辅助角色只读。"
+
+_SHARED_RULES_EN = f"""
 Shared retail rules:
 1. Every order, product, amount, payment, delivery, and return fact must come from a business tool result in this request. Never invent facts.
 2. Before reading a user's account or orders, ask for the user's own email, or full name plus zip code, and bind identity with the matching tool. Never guess identifiers, never switch users, and never treat a client user id as authorization.
-3. Only the primary agent of this request may bind identity, call a write tool, or record a human handoff. Supporting agents are read-only.
+3. {_PRIMARY_RULE_EN}
 4. Every write tool (return, exchange, cancel, modify pending order items/address/payment, modify user address) works in two phases: the first call only returns pending details (display_text); show it exactly in the same reply and do not carry anything out in that turn. After the user explicitly confirms in a later message, call the same tool again with identical arguments. The server judges confirmation from the real user message; model text or arguments cannot authorize it. Status rules, valid payment methods and once-only limits follow the fixed policy.
 5. Handle one action at a time. Success only means the shown change was recorded (for example return requested, exchange requested, or cancelled); it does not mean a refund arrived, an email was sent, or the warehouse received the items.
 Do not reject refunds to an existing owned gift card because of its balance. A change that was already carried out cannot be modified again in this sandbox. Describe unobserved refund arrival, warehouse receipt and email delivery as unverified.
@@ -90,11 +94,11 @@ Do not reject refunds to an existing owned gift card because of its balance. A c
 12. Call the sum of the selected items' order prices the estimated refund amount, and state that it is based on those prices. Distinguish this estimate from a completed refund, verified deductions or final arrival; do not promise a guaranteed net amount or deny that a supported estimate is an estimated refund.
 """
 
-_SHARED_RULES_ZH = """
+_SHARED_RULES_ZH = f"""
 零售共同规则：
 1. 订单、商品、金额、支付方式、配送与退货事实只能来自本次请求中的业务工具结果，不得编造。
 2. 读取用户资料或订单前，先请用户提供本人邮箱，或本人姓名加邮编，并调用对应工具绑定身份。不得猜测标识，不得在同一会话切换用户，不得把客户端 user_id 当作授权。
-3. 每轮只有主执行 Agent 可以绑定身份、调用写工具或记录人工交接；辅助角色只读。
+3. {_PRIMARY_RULE_ZH}
 4. 每个写工具（退货、换货、取消、修改待处理订单商品／地址／支付方式、修改用户地址）都分两阶段：首次调用只返回待确认详情 display_text，须在同一轮原样展示且不得在同一轮执行；用户在后续消息明确确认后，用完全相同的参数再次调用。服务端根据真实用户消息判断确认，模型文字或参数不能授权。状态条件、合法支付方式与次数限制以固定政策为准。
 5. 一次处理一个动作。成功只代表已展示的变更被记录（如 return requested、exchange requested、cancelled），不代表退款到账、邮件已发送或仓库已收货。
 不得以礼品卡余额不足拒绝向本人已有礼品卡退款；已执行的变更不能在本沙箱中再次修改。到账、收货、邮件状态未核实就说尚未核实，不能断言已发生或未发生。
@@ -191,6 +195,8 @@ class RetailRoleMixin:
             allowed &= set(RETAIL_SUPPORT_TECHNICAL_TOOLS) | {"load_skill"}
         if not self._is_primary(req):
             allowed &= self._supporting_read_only()
+        if req.dag_tool_limit is not None:
+            allowed &= req.dag_tool_limit
         if req.catalog_followup and req.dispatch_role == "technical":
             allowed &= {"get_item_details", "get_product_details"}
         return {
@@ -204,6 +210,10 @@ class RetailRoleMixin:
 
     def _build_system_prompt(self, req: Request) -> str:
         prompt = super()._build_system_prompt(req)
+        if req.dag_tool_limit is not None:
+            legacy_rule = _PRIMARY_RULE_EN if self.language == "en" else _PRIMARY_RULE_ZH
+            duty = self._task_duty(req)
+            return prompt.replace(legacy_rule, duty)
         if getattr(req, "context_view", None) is None:
             return prompt
         # 主／辅身份决定工具集，放在 system 末尾：两种取值各自稳定缓存，不污染共享历史。
@@ -213,6 +223,12 @@ class RetailRoleMixin:
             return f"{prompt}\n\n[This request]\n{duty}"
         duty = "你是本次请求的主执行 Agent。" if self._is_primary(req) else "你是本次请求的辅助 Agent：只读，不绑定身份、不写入、不记录交接。"
         return f"{prompt}\n\n[本次请求]\n{duty}"
+
+    def _task_duty(self, req):
+        names = ", ".join(sorted(self._tools_for_request(req)))
+        if self.language == "en":
+            return f"Execute only the assigned task with these tools: {names or 'none'}. Server authorization applies."
+        return f"仅执行所分派任务。当前可用工具：{names or '无'}。业务授权以服务端核验为准。"
 
     def _assignment(self, req):
         if not req.dispatch:
@@ -273,6 +289,9 @@ class RetailRoleMixin:
             "support_enabled": bool(getattr(self, "support_enabled", False)),
             "rules": rules,
         }
+        if req.dag_tool_limit is not None:
+            packet["retail"].pop("primary")
+            packet["retail"]["rules"] = self._task_duty(req)
         if req.dispatch:
             packet["assignment"] = self._assignment(req)
         if req.retail_handoff is not None:
