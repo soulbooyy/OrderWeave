@@ -5,6 +5,7 @@ import re
 import time
 
 from agents.agent_orchestrator import AgentType, OrchestratorResult, _stop_exception
+from agents.retail_dag_composer import compose_tasks
 from agents.retail_tools import TASK_TOOLS
 from core.retail_dag import Status
 from core.intent_recognizer import IntentCategory
@@ -316,8 +317,6 @@ class DagRunner:
             "attempts": list(self.state.attempts),
             "tasks": [{"id": r.task_id, "role": r.role, "status": r.status.value,
                        "reason": r.reason, "refs": list(r.refs), "turn": r.turn} for r in runs]}
-        facts = [f"{field}: {value}" for r in runs if r.status == Status.SUCCEEDED
-                 for field,value in r.facts.items() if field != "op_id"]
         if self.state.stop == "choose_target":
             choices = next((r.facts.get("choices") for r in runs if r.status == Status.WAITING_USER), ())
             self.note = ("Please specify the target ID: " if self.router.language == "en" else "请指定目标编号：") + ", ".join(choices or ())
@@ -327,11 +326,14 @@ class DagRunner:
         elif self.state.stop == "unknown_result":
             self.note = ("The previous operation is unverified. No operation was replayed." if self.router.language == "en"
                          else "上次操作结果尚未核实，本轮未重放操作。")
-        if not self.state.complete and not self.note:
-            self.note = ("Some requested steps remain unresolved." if self.router.language == "en" else "部分任务尚未完成。")
+        elif self.state.stop == "confirmation" and not self.note and self.req.retail_store:
+            pending = self.req.retail_store.active_pending(self.req.user_id, self.req.conv_id)
+            self.note = next((op["display_text"] for op in pending
+                              if op["op_id"] == self.state.operation.get("op_id")), "")
+        content = compose_tasks(self.state, self.router.language, self.note)
         result = OrchestratorResult(
             request_id=self.req.request_id, intent=self.req.intent, agent_type=AgentType.RETAIL,
-            response="\n".join(facts + ([self.note] if self.note else [])), success=self.state.complete,
+            response=content, composer_output=content, success=self.state.complete,
             routing_reason="dag_tasks", agent_types=[r.agent_type for r in self.responses],
             tools_used=list(dict.fromkeys(t for r in self.responses for t in r.tools_used)),
             tool_traces=[t for r in self.responses for t in r.tool_traces],

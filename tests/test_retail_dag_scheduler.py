@@ -308,8 +308,11 @@ def test_order_count_branches_with_real_tool_loop(tmp_path,workflow,failed,monke
     expected = "failed" if failed else "succeeded"
     branches = ["skipped",expected] if count == 2 else [expected,"skipped"]
     assert [r["status"] for r in result.semantic_routing["dag"]["tasks"]] == ["succeeded",*branches]
-    fact = "ventilation: high" if count == 2 else "sensor_type: laser"
-    assert (fact in result.response) is (not failed)
+    assert f"{count} 件" in result.response
+    field = "通风等级" if count == 2 else "传感器类型"
+    assert field in result.response and chosen_id in result.response
+    assert ("尚未核实" in result.response) is failed
+    assert (("high" if count == 2 else "laser") in result.response) is (not failed)
 
 
 def test_unknown_or_omitted_condition_never_reaches_an_agent():
@@ -524,3 +527,20 @@ def test_specialist_with_no_capability_is_blocked_before_claim():
     driver = DagRunner(app, Request("111222 color", "u", "c"), state)
     assert driver.next_role() is None
     assert (state.runs["spec"].reason, state.runs["spec"].attempt) == ("capability_unavailable", 0)
+
+
+def test_composer_orders_verified_basis_before_unmodified_card():
+    from agents.retail_dag_composer import compose_tasks
+    from core.retail_scheduler import Execution
+
+    rows = conditional_rows()
+    rows[1].update(kind="return_change", output="executed")
+    state = Execution.start(build(rows, COUNT_QUERY))
+    count = state.runs["n"]
+    count.status, count.refs, count.facts = Status.SUCCEEDED, ("tool:count",), {"purchased_item_count": 3}
+    state.runs["yes"].status = Status.WAITING_USER
+    state.runs["no"].status = Status.SKIPPED
+    card = "确认详情\n请核对全部内容。"
+    text = compose_tasks(state, "zh", card)
+    assert text.index("3 件") < text.index("根据已核实") < text.index(card)
+    assert text.endswith(card) and text.count(card) == 1 and "已提交" not in text
