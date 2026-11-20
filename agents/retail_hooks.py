@@ -50,6 +50,8 @@ class SameTurnExecutionHook(LoopHook):
         if (name in RETAIL_WRITE_TOOLS and isinstance(result, dict) and result.get("success") is True
                 and result.get("action_status") == "pending_confirmation"):
             ctx.state["prepared"] = True
+            if ctx.req.dag_assignment:
+                ctx.state["stop_response"] = result["display_text"]
 
 
 class PrimaryOnlyHook(LoopHook):
@@ -60,7 +62,11 @@ class PrimaryOnlyHook(LoopHook):
     def pre_tool(self, ctx, name, args) -> Optional[str]:
         agent = ctx.agent
         if ctx.req.dag_tool_limit is not None:
-            if name not in agent._tools_for_request(ctx.req):
+            assignment = ctx.req.dag_assignment
+            target_arg = {"get_item_details": "item_id", "get_product_details": "product_id",
+                          "get_order_details": "order_id"}.get(name)
+            wrong_target = (assignment and target_arg and args.get(target_arg) != assignment["target"])
+            if wrong_target or name not in agent._tools_for_request(ctx.req):
                 return ("This task does not permit that tool." if _en(ctx) else "当前任务无权调用此工具。")
             return None
         if agent._is_primary(ctx.req) or name in agent._supporting_read_only():

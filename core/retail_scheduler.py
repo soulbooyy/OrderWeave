@@ -13,6 +13,7 @@ class Execution:
     operation: dict = field(default_factory=dict)
     selected: dict = field(default_factory=dict)
     stop: str = ""
+    attempts: list[dict] = field(default_factory=list)
 
     @classmethod
     def start(cls, plan, bound_user=""):
@@ -58,8 +59,12 @@ class Execution:
         return None
 
     def inputs(self, task):
-        return {dep: dict(self.runs[dep].facts) for dep in task.depends_on
-                if self.runs[dep].status == Status.SUCCEEDED}
+        inputs = {}
+        for parent in self.plan.nodes:
+            if parent.id in task.depends_on and self.runs[parent.id].status == Status.SUCCEEDED:
+                facts = self.runs[parent.id].facts
+                inputs[parent.id] = {parent.output: facts[parent.output]} if parent.output in facts else {}
+        return inputs
 
     def target(self, task):
         if task.target or task.id in self.selected:
@@ -69,13 +74,28 @@ class Execution:
             candidates = [set(f[field]) for f in inputs.values() for field in ("item_ids", "variants") if field in f]
             if candidates:
                 values = sorted(set.intersection(*candidates))
+                if not values:
+                    return "", None
                 return (values[0], []) if len(values) == 1 else ("", values)
         orders = {f["order_id"] for f in inputs.values() if f.get("order_id")}
-        return (orders.pop(), []) if len(orders) == 1 else ("", [])
+        return (orders.pop(), []) if len(orders) == 1 else ("", sorted(orders))
 
     @property
     def complete(self):
         return all(r.status in (Status.SUCCEEDED, Status.SKIPPED) for r in self.runs.values())
+
+    def record_attempts(self):
+        positions = {(a["id"], a["attempt"]): index for index, a in enumerate(self.attempts)}
+        for run in self.runs.values():
+            if not run.attempt:
+                continue
+            key = (run.task_id, run.attempt)
+            entry = {"id": run.task_id, "attempt": run.attempt, "role": run.role, "turn": run.turn,
+                     "status": run.status.value, "reason": run.reason, "refs": list(run.refs)}
+            if key in positions:
+                self.attempts[positions[key]] = entry
+            else:
+                self.attempts.append(entry)
 
     def dump(self):
         return asdict(self)

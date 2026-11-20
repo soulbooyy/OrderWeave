@@ -809,6 +809,8 @@ class IntentRecognizer:
                    "language": getattr(self, "language", None)}
         if getattr(self, "routing_mode", "keyword") != "keyword":
             payload["routing_mode"] = self.routing_mode
+            if self.routing_mode == "dag":
+                payload["task_contract_version"] = 1
         if history:
             payload["history"] = [
                 {

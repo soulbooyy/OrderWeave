@@ -1,7 +1,7 @@
 """Validated retail task graphs and per-node execution state."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import operator
 import re
@@ -56,6 +56,7 @@ class Condition:
     comparison: str
     value: int | str
     otherwise: bool
+    clause: str = ""
 
     def evaluate(self, upstream: Run) -> bool | None:
         if upstream.task_id != self.source or upstream.status != Status.SUCCEEDED or not upstream.refs:
@@ -108,7 +109,7 @@ def _condition(raw, task, message, sources):
         raise ValueError("unsupported_condition")
     if sources[source].output != field:
         raise ValueError("unavailable_condition_field")
-    return Condition(source, field, comparison, value, task.quote == no)
+    return Condition(source, field, comparison, value, task.quote == no, quote.rstrip("。！？.!?"))
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,27 @@ class Plan:
     conversation: str
     nodes: tuple[Node, ...]
     version: int = 1
+
+    @classmethod
+    def for_execution(cls, rows, message, client, conversation):
+        if not isinstance(rows, list):
+            raise ValueError("invalid_task_list")
+        guards = [row.get("run_if") for row in rows if isinstance(row, dict)]
+        # Every conditional in the original message must belong to a verifiable
+        # clause. Removing a condition during extraction must never authorize action.
+        remainder = message
+        for guard in guards:
+            if isinstance(guard, dict) and isinstance(guard.get("quote"), str):
+                remainder = remainder.replace(guard["quote"], "", 1)
+        if re.search(r"\b(?:if|unless|otherwise)\b|如果|若|否则", remainder, re.I):
+            raise ValueError("unrepresented_condition")
+        plan = cls.build(rows, message, client, conversation)
+        conditions = {node.run_if for node in plan.nodes if node.run_if}
+        for condition in conditions:
+            if (re.search(r"[，,;；]\s*(?:否则|otherwise |else )", condition.clause, re.I)
+                    and replace(condition, otherwise=not condition.otherwise) not in conditions):
+                raise ValueError("missing_branch_action")
+        return plan
 
     @classmethod
     def build(cls, rows, message, client, conversation):

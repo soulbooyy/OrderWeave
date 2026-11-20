@@ -206,6 +206,7 @@ class Request:
     dispatch_role: Optional[str] = None
     retail_store: Any = None
     dag_assignment: Optional[dict] = None
+    dag_ticket: Optional[tuple] = None
     dag_tool_limit: Optional[frozenset[str]] = None
     catalog_steps: dict = field(default_factory=dict)
 
@@ -1168,7 +1169,8 @@ class AgentOrchestrator:
                 req.intent_confidence = 1.0
                 req.retail_routing = {"path": "rule", "reason": "pending", "encoder_calls": 0}
             else:
-                intent_result = await self._retail_selective_intent(req) if retail_mode else None
+                intent_result = (await self._retail_selective_intent(req) if retail_mode
+                                 and not (schedule and self.routing_mode == "dag") else None)
                 if intent_result is None:
                     recognition_history = req.history
                     if retail_mode and getattr(self, "_retail_semantic_router", None) is not None and language == "zh":
@@ -1236,16 +1238,16 @@ class AgentOrchestrator:
                 self._record_tool_trace(result)
                 return result
 
-        if (retail_mode and self.routing_mode == "dag" and isinstance(subtasks, list) and subtasks
+        if (retail_mode and self.routing_mode == "dag" and (subtasks or (schedule and re.search(r"\b(?:if|unless)\b|如果|若|否则", req.message, re.I)))
                 and req.intent not in (IntentCategory.ESCALATION, IntentCategory.HUMAN_HANDOFF)
                 and not pending_reply and not self._support_routing(req)):
             extended = any(isinstance(row, dict) and {"run_if", "condition", "output", "target"}.intersection(row)
-                           for row in subtasks)
+                           for row in (subtasks if isinstance(subtasks, list) else ()))
             if schedule or extended:
                 from agents.retail_dag_runner import DagRunner
                 from core.retail_scheduler import Execution
                 try:
-                    plan = Plan.build(subtasks, req.message, req.user_id, req.conv_id)
+                    plan = Plan.for_execution(subtasks, req.message, req.user_id, req.conv_id)
                 except ValueError as exc:
                     reason = str(exc)
                 else:

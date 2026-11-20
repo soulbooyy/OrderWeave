@@ -1,6 +1,10 @@
 import pytest
+from evaluation.harness.config import SEED_PATH
 from core.retail_dag import Status
 from tests.test_retail_dag import build, node, conditional_rows, COUNT_QUERY
+
+
+requires_seed = pytest.mark.skipif(not SEED_PATH.is_file(), reason="retail seed unavailable")
 
 
 def test_ready_loop_repeated_role_fan_in_and_independent_failure():
@@ -23,7 +27,8 @@ def test_ready_loop_repeated_role_fan_in_and_independent_failure():
 
 
 @pytest.mark.parametrize("n,chosen", [(2, "no"), (3, "yes")])
-def test_conditional_join_requires_success_of_selected_branch(n, chosen):
+@pytest.mark.parametrize("verified", [True, False])
+def test_conditional_join_requires_success_of_selected_branch(n, chosen, verified):
     from core.retail_scheduler import Execution
     rows = conditional_rows() + [dict(node("j", "product_info", "yes", "no"), quote="汇总")]
     state = Execution.start(build(rows, COUNT_QUERY + "汇总"))
@@ -33,11 +38,16 @@ def test_conditional_join_requires_success_of_selected_branch(n, chosen):
     first.move(Status.SUCCEEDED, refs=("tool:read",), facts={"purchased_item_count": n})
     assert state.next_node(1).id == chosen
     state.runs[chosen].claim("technical", 1)
-    state.runs[chosen].move(Status.SUCCEEDED, refs=("tool:spec",))
-    assert state.next_node(1).id == "j"
+    if verified:
+        state.runs[chosen].move(Status.SUCCEEDED, refs=("tool:spec",))
+        assert state.next_node(1).id == "j"
+    else:
+        state.runs[chosen].move(Status.FAILED, reason="missing_evidence")
+        assert state.next_node(1) is None and state.runs["j"].status == Status.BLOCKED
 
 
 @pytest.mark.parametrize("workflow", ["langgraph", "legacy"])
+@requires_seed
 def test_repeated_specialist_through_service(workflow, tmp_path, monkeypatch):
     import asyncio
     import json
@@ -45,7 +55,6 @@ def test_repeated_specialist_through_service(workflow, tmp_path, monkeypatch):
     from agents.retail_agent import RetailService
     from agents.retail_multi_agent import RetailMultiAgent
     from agents.retail_tools import retail_tools
-    from evaluation.harness.config import SEED_PATH
     from mcp_tools.retail_store import RetailStore
     from tests.test_retail_dispatch import router
     from tests.test_retail_dag import trace
@@ -84,9 +93,9 @@ def test_repeated_specialist_through_service(workflow, tmp_path, monkeypatch):
     assert result.success
 
 
+@requires_seed
 def test_durable_claim_compare_and_swap(tmp_path):
     from core.retail_scheduler import Execution
-    from evaluation.harness.config import SEED_PATH
     from mcp_tools.retail_store import RetailStore, RetailStoreError
     store = RetailStore(tmp_path / "state.sqlite", SEED_PATH)
     state = Execution.start(build([node("x")]), "u")
@@ -95,20 +104,35 @@ def test_durable_claim_compare_and_swap(tmp_path):
     for copy in (a,b):
         task = copy.next_node(1)
         copy.runs[task.id].claim("technical",1)
-    store.save_dag(a)
-    with pytest.raises(RetailStoreError, match="concurrent"):
-        store.save_dag(b)
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    gate = Barrier(2)
+
+    def claim(copy):
+        gate.wait(timeout=5)
+        try:
+            store.save_dag(copy)
+        except RetailStoreError as exc:
+            assert "concurrent" in str(exc)
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(claim, (a, b))) == [False, True]
     assert store.open_dags("client","other") == []
 
 
 @pytest.mark.parametrize("workflow", ["legacy","langgraph"])
-def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow):
+@pytest.mark.parametrize("reply", ["Yes, please proceed.", "No", "human agent", "change the refund destination", "Use order #W9999999",
+                                   "What color is variant 1665571435?", "expired", "binding_mismatch", "undisplayed", "crash_after_commit"])
+@requires_seed
+def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow,reply):
     import asyncio,json
     from agents.agent_orchestrator import AgentType,AgentResponse
     from agents.retail_agent import RetailService
     from agents.retail_multi_agent import RetailMultiAgent
     from agents.retail_tools import retail_tools
-    from evaluation.harness.config import SEED_PATH
     from mcp_tools.retail_store import RetailStore
     from tests.test_retail_dispatch import router
     from tests.test_retail_dag import trace
@@ -125,17 +149,20 @@ def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow):
     tools = retail_tools(store)
     calls = []
     async def turn(message):
-        app = router("dag",rows)
+        side = [dict(node("spec"),quote=message,target="1665571435",output="color")]
+        app = router("dag",side if message.startswith("What color") else rows)
         app.language = "en"
         app.set_shared_tools(tools)
         async def execute(req):
             a = req.dag_assignment
             calls.append((req.turn,a["id"]))
             tool,params = ("return_delivered_order_items",args) if a["id"]=="ret" else ("get_order_details",{"order_id":oid})
+            if a["id"] == "spec":
+                tool,params = "get_item_details",{"item_id":a["target"]}
             result = tools[tool].handler(req,params)
             return AgentResponse(AgentType(req.dispatch_role), result.get("display_text","done"), True,
                                  tool_traces=[trace(tool,params,**result)])
-        for role in ("billing","general"):
+        for role in ("billing","general","technical"):
             monkeypatch.setattr(app._best_agent(AgentType(role)),"handle",execute)
         service = RetailService(store,RetailMultiAgent(app),workflow_mode=workflow,language="en")
         try:
@@ -143,18 +170,80 @@ def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow):
         finally:
             if service.workflow:
                 await service.workflow.close()
+    if reply == "undisplayed":
+        with monkeypatch.context() as patch:
+            patch.setattr(store, "mark_pending_displayed", lambda *args: False)
+            asyncio.run(turn(" ".join(r["quote"] for r in rows)))
+        assert store.active_pending("u", "c")[0]["status"] == "prepared"
+        asyncio.run(turn("Yes, please proceed."))
+        assert not store.active_pending("u", "c") and not store.open_dags("u", "c")
+        assert not any(e["event_type"] == "return_requested" for e in store.list_events("u", "c"))
+        return
+
     first = asyncio.run(turn(" ".join(r["quote"] for r in rows)))
     op, = store.active_pending("u","c")
     assert op["status"]=="displayed" and op["display_text"] in first.response and not first.success
-    second = asyncio.run(turn("Yes, please proceed."))
-    assert calls == [(1,"ret"),(2,"ret"),(2,"read")]
+    assert [r["status"] for r in first.semantic_routing["dag"]["tasks"]] == ["waiting_user", "blocked"]
+    if reply == "binding_mismatch":
+        from agents.agent_orchestrator import Request
+        from agents.retail_dag_runner import DagRunner
+
+        changed = Request("Yes, please proceed.", "u", "c", retail_store=store, turn=2,
+                          retail_user_id="different-user", retail_pending=[op])
+        assert DagRunner.resume(router("dag", []), changed) is None
+        assert not store.open_dags("u", "c") and not store.active_pending("u", "c")
+        assert not any(e["event_type"] == "return_requested" for e in store.list_events("u", "c"))
+        return
+    if reply == "crash_after_commit":
+        class SimulatedCrash(BaseException):
+            pass
+
+        from agents.retail_dag_runner import DagRunner
+        save = DagRunner.save
+        def crash_before_checkpoint(driver):
+            if driver.state.runs["ret"].status == Status.SUCCEEDED:
+                raise SimulatedCrash()
+            return save(driver)
+        with monkeypatch.context() as patch:
+            patch.setattr(DagRunner, "save", crash_before_checkpoint)
+            with pytest.raises(SimulatedCrash):
+                asyncio.run(turn("Yes, please proceed."))
+        assert store.open_dags("u","c")[0].runs["ret"].status == Status.RUNNING
+        recovered = asyncio.run(turn("continue"))
+        if not recovered.success:
+            recovered = asyncio.run(turn("continue"))
+        assert recovered.success and [key for _,key in calls] == ["ret","ret","read"]
+        assert sum(e["event_type"]=="return_requested" for e in store.list_events("u","c")) == 1
+        return
+    if reply == "expired":
+        store.cancel_pending("u","c","expired")
+        asyncio.run(turn("Yes, please proceed."))
+        assert not store.active_pending("u","c")
+        assert not any(e["event_type"]=="return_requested" for e in store.list_events("u","c"))
+        return
+    second = asyncio.run(turn(reply))
+    if reply.startswith("What color"):
+        assert second.success and calls == [(1,"ret"),(2,"spec")]
+        second = asyncio.run(turn("Yes, please proceed."))
+        assert calls[-2:] == [(3,"ret"),(3,"read")]
+    elif reply != "Yes, please proceed.":
+        assert not store.active_pending("u","c") and not store.open_dags("u","c")
+        assert not any(e["event_type"]=="return_requested" for e in store.list_events("u","c"))
+        if reply == "human agent":
+            assert second.escalated
+        return
+    else:
+        assert calls == [(1,"ret"),(2,"ret"),(2,"read")]
+    asyncio.run(turn("Yes, please proceed."))
     assert second.success and first.semantic_routing["dag"]["plan_id"] == second.semantic_routing["dag"]["plan_id"]
     assert sum(e["event_type"]=="return_requested" for e in store.list_events("u","c"))==1
 
 
 @pytest.mark.parametrize("workflow", ["legacy","langgraph"])
 @pytest.mark.parametrize("failed", [False, True])
-def test_original_two_item_order_with_real_tool_loop(tmp_path,workflow,failed,monkeypatch):
+@pytest.mark.parametrize("count", [2,3])
+@requires_seed
+def test_order_count_branches_with_real_tool_loop(tmp_path,workflow,failed,monkeypatch,count):
     import asyncio,json
     from types import SimpleNamespace
     from agents.agent_orchestrator import AgentType
@@ -162,26 +251,26 @@ def test_original_two_item_order_with_real_tool_loop(tmp_path,workflow,failed,mo
     from agents.retail_multi_agent import RetailMultiAgent
     from agents.retail_tools import retail_tools
     from core.retail_subtasks import OWNERS
-    from evaluation.harness.config import SEED_PATH
     from mcp_tools.retail_store import RetailStore
     from tests.test_retail_dispatch import router
     clause = ("if there are at least three purchased items, find the sensor type of Gaming Mouse variant "
               "7420906769 (product 5713490933); otherwise find the ventilation of Cycling Helmet variant "
               "1665571435 (product 7765186836)")
-    read = "Please look up order #W6564160 and count the purchased items recorded on that order."
+    seed = json.loads(SEED_PATH.read_text())
+    oid = "#W6564160" if count == 2 else next(k for k,o in seed["orders"].items() if len(o["items"]) == count)
+    read = f"Please look up order {oid} and count the purchased items recorded on that order."
     msg = ("Thanks. " + read + " Then apply this rule exactly: " + clause +
            ". Use the order record to choose which single variant to check. Please tell me the order finding "
            "and the applicable specification. This is read-only; no changes.")
     yes,no = clause.split(", ",1)[1].split("; otherwise ")
-    rows = [dict(node("order","order_lookup"),quote=read,target="#W6564160",output="purchased_item_count")]
+    rows = [dict(node("order","order_lookup"),quote=read,target=oid,output="purchased_item_count")]
     for key,quote,target,field in [("mouse",yes,"7420906769","sensor_type"),("helmet",no,"1665571435","ventilation")]:
         rows.append(dict(node(key,"product_info","order"),quote=quote,target=target,output=field,
                          run_if={"source":"order","quote":clause}))
     app = router("dag",rows)
     monkeypatch.setitem(OWNERS,"order_lookup","billing")
     db = RetailStore(tmp_path / "db.sqlite",SEED_PATH)
-    seed = json.loads(SEED_PATH.read_text())
-    uid = seed["orders"]["#W6564160"]["user_id"]
+    uid = seed["orders"][oid]["user_id"]
     db.find_user_by_email("u","c",seed["users"][uid]["email"])
     db.begin_turn("u","c"); db.begin_turn("u","c")
     app.set_shared_tools(retail_tools(db))
@@ -193,7 +282,8 @@ def test_original_two_item_order_with_real_tool_loop(tmp_path,workflow,failed,mo
             assignment = json.loads(kwargs["messages"][0]["content"][0]["text"])["assignment"]
             role = "billing" if assignment["id"]=="order" else "technical"
             if role=="technical":
-                assert assignment["inputs"] == {"order":{"purchased_item_count":2}}
+                assert assignment["inputs"] == {"order":{"purchased_item_count":count}}
+                assert assignment["input_refs"]["order"] == ["tool:callbilling"]
                 assert "payment_history" not in json.dumps(kwargs["messages"])
             seen.append((role,assignment["target"]))
             if failed and role=="technical":
@@ -212,8 +302,225 @@ def test_original_two_item_order_with_real_tool_loop(tmp_path,workflow,failed,mo
             if service.workflow:
                 await service.workflow.close()
     result = asyncio.run(run())
-    assert seen == [("billing","#W6564160"),("technical","1665571435")]
+    chosen_id = "1665571435" if count == 2 else "7420906769"
+    assert seen == [("billing",oid),("technical",chosen_id)]
     assert result.turn == 3 and result.success is (not failed)
-    assert [r["status"] for r in result.semantic_routing["dag"]["tasks"]] == [
-        "succeeded","skipped","failed" if failed else "succeeded"]
-    assert ("ventilation: high" in result.response) is (not failed)
+    expected = "failed" if failed else "succeeded"
+    branches = ["skipped",expected] if count == 2 else [expected,"skipped"]
+    assert [r["status"] for r in result.semantic_routing["dag"]["tasks"]] == ["succeeded",*branches]
+    fact = "ventilation: high" if count == 2 else "sensor_type: laser"
+    assert (fact in result.response) is (not failed)
+
+
+def test_unknown_or_omitted_condition_never_reaches_an_agent():
+    import asyncio
+    from agents.agent_orchestrator import Request
+    from tests.test_retail_dispatch import router
+    msg = "如果订单至少有 3 件商品，就查鼠标规格，否则查头盔规格。"
+    for rows in ([], [dict(node("t"), quote="查头盔规格", output="color")]):
+        result = asyncio.run(router("dag", rows).run(Request(msg,"u","c")))
+        assert result.routing_reason.startswith("dag_contract:") and not result.success
+        assert not result.role_traces
+
+
+@requires_seed
+def test_ambiguous_targets_can_only_resume_from_a_verified_choice(tmp_path):
+    from types import SimpleNamespace
+    from agents.agent_orchestrator import Request
+    from agents.retail_dag_runner import DagRunner
+    from core.retail_scheduler import Execution
+    from mcp_tools.retail_store import RetailStore
+    store = RetailStore(tmp_path/"db.sqlite",SEED_PATH)
+    state = Execution.start(build([dict(node("read","order_lookup"),output="item_ids"),
+                                   dict(node("spec","product_info","read"),output="color")]))
+    r = state.runs["read"]
+    r.move(Status.READY); r.claim("billing",1)
+    r.move(Status.SUCCEEDED,facts={"item_ids":["111222","333444"]},refs=("tool:1",))
+    req = Request("read", "client","conv",turn=1,retail_store=store)
+    app = SimpleNamespace(language="en")
+    driver = DagRunner(app,req,state)
+    assert driver.next_role() is None
+    req.turn = 2
+    for msg in ("some other question","999999"):
+        req.message = msg
+        assert DagRunner.resume(app,req) is None
+    req.message = "333444"
+    resumed = DagRunner.resume(app,req)
+    assert resumed.state.target(state.plan.nodes[1]) == ("333444",[])
+    assert resumed.state.runs["read"].attempt == 1
+
+
+@requires_seed
+def test_recovery_uses_op_event_without_replaying_write(tmp_path):
+    import json
+    from types import SimpleNamespace
+    from agents.agent_orchestrator import Request
+    from agents.retail_dag_runner import DagRunner
+    from core.retail_scheduler import Execution
+    from mcp_tools.retail_store import RetailStore
+    store = RetailStore(tmp_path/"recovery.sqlite", SEED_PATH, language="en")
+    seed = json.loads(SEED_PATH.read_text())
+    order = next(o for o in seed["orders"].values() if o["status"]=="delivered")
+    uid,oid = order["user_id"],order["order_id"]
+    store.begin_turn("client","conv")
+    store.find_user_by_email("client","conv",seed["users"][uid]["email"])
+    args = dict(order_id=oid,item_ids=[order["items"][0]["item_id"]],
+                payment_method_id=order["payment_history"][0]["payment_method_id"])
+    tool = "return_delivered_order_items"
+    prepared = store.write_action("client","conv",tool,args,"")
+    store.mark_pending_displayed("client","conv",prepared["op_id"],1,False)
+    rejected = store.write_action("client", "conv", tool, args, "yes", expected_op_id=prepared["op_id"])
+    assert not rejected["success"] and [p["op_id"] for p in store.active_pending("client", "conv")] == [prepared["op_id"]]
+    store.begin_turn("client","conv")
+    state = Execution.start(build([dict(node("ret","return_change"),quote=oid,target=oid,output="executed")]),uid)
+    state.operation = dict(kind="return",args=args,op_id=prepared["op_id"])
+    state.next_node(2)
+    state.runs["ret"].claim("billing",2)
+    store.save_dag(state)
+    req = Request("continue","client","conv",retail_store=store,retail_user_id=uid,turn=3)
+    app = SimpleNamespace(language="en")
+    interrupted = DagRunner.resume(app,req)
+    assert interrupted.state.stop == "unknown_result" and interrupted.next_role() is None
+    assert store.write_action("client","conv",tool,args,"Yes, please proceed.")["action_status"] == "executed"
+    recovered = DagRunner.resume(app,req)
+    assert recovered.state.complete and recovered.next_role() is None
+    assert len([e for e in store.list_events("client","conv") if e["event_type"]=="return_requested"]) == 1
+
+
+@requires_seed
+def test_stale_claim_cannot_prepare_business_operation(tmp_path):
+    import json
+    from core.retail_scheduler import Execution
+    from mcp_tools.retail_store import RetailStore
+    store = RetailStore(tmp_path/"race.sqlite",SEED_PATH)
+    seed = json.loads(SEED_PATH.read_text())
+    order = next(o for o in seed["orders"].values() if o["status"]=="delivered")
+    oid,uid = order["order_id"],order["user_id"]
+    turn = store.begin_turn("client","conv")
+    store.find_user_by_email("client","conv",seed["users"][uid]["email"])
+    state = Execution.start(build([dict(node("w","return_change"),quote=oid,target=oid,output="executed")]),uid)
+    state.next_node(turn)
+    state.runs["w"].claim("billing",turn)
+    store.save_dag(state)
+    ticket = (state.plan.id,"w",state.revision,turn)
+    store.begin_turn("client","conv")
+    args = dict(order_id=oid,item_ids=[order["items"][0]["item_id"]],
+                payment_method_id=order["payment_history"][0]["payment_method_id"])
+    answer = store.write_action("client","conv","return_delivered_order_items",args,"",
+                                allow_execute=False,dag_ticket=ticket)
+    assert not answer["success"] and not store.active_pending("client","conv")
+
+
+@pytest.mark.parametrize("workflow", ["legacy","langgraph"])
+@requires_seed
+def test_longest_plan_and_unavailable_role(workflow,tmp_path,monkeypatch):
+    import asyncio
+    from agents.agent_orchestrator import AgentType, AgentResponse
+    from agents.retail_agent import RetailService
+    from agents.retail_multi_agent import RetailMultiAgent
+    from agents.retail_tools import retail_tools
+    from mcp_tools.retail_store import RetailStore
+    from tests.test_retail_dispatch import router
+    from tests.test_retail_dag import trace
+    rows = [dict(node(f"n{i}","product_info",*([f"n{i-1}"] if i else [])),
+                 quote="1665571435 color",target="1665571435",output="color") for i in range(12)]
+    store = RetailStore(tmp_path/"db.sqlite",SEED_PATH)
+    app = router("dag",rows)
+    tools = retail_tools(store)
+    app.set_shared_tools(tools)
+    calls = []
+    async def handle(req):
+        calls.append(req.dag_assignment["id"])
+        args = {"item_id":"1665571435"}
+        return AgentResponse(AgentType.TECHNICAL,"checked",True,tool_traces=[
+            trace("get_item_details",args,**tools["get_item_details"].handler(req,args))])
+    monkeypatch.setattr(app._best_agent(AgentType.TECHNICAL),"handle",handle)
+    async def run():
+        service = RetailService(store,RetailMultiAgent(app),workflow_mode=workflow)
+        try:
+            completed = await service.handle_turn(rows[0]["quote"],"u","a")
+            app._pool.pop(AgentType.TECHNICAL)
+            blocked = await service.handle_turn(rows[0]["quote"],"u","b")
+            return completed,blocked
+        finally:
+            if service.workflow:
+                await service.workflow.close()
+    completed,blocked = asyncio.run(run())
+    assert completed.success and calls == [r["id"] for r in rows]
+    assert not blocked.success and all(r["status"]=="blocked" for r in blocked.semantic_routing["dag"]["tasks"])
+
+
+def test_dispatch_cap_and_budget_stop_are_bounded():
+    from core.retail_scheduler import Execution
+    from agents.retail_dag_runner import DagRunner
+    from agents.agent_orchestrator import Request,AgentType
+    from evaluation.retail_budget import BudgetExceeded
+    from tests.test_retail_dispatch import router
+    import asyncio
+    state = Execution.start(build([dict(node("a"),quote="111222 color",target="111222",output="color"),node("b")]))
+    first = state.next_node(0,limit=1)
+    state.runs[first.id].claim("technical",0)
+    state.runs[first.id].move(Status.FAILED,reason="test")
+    assert state.next_node(0,limit=1) is None and state.stop=="dispatch_limit"
+    fresh = Execution.start(state.plan)
+    app = router("dag",[])
+    app.set_shared_tools({"get_item_details": object()})
+    async def stopped(req):
+        raise BudgetExceeded("offline")
+    app._best_agent(AgentType.TECHNICAL).handle = stopped
+    runner = DagRunner(app,Request("read","u","c"),fresh)
+    assert runner.next_role()=="technical"
+    with pytest.raises(BudgetExceeded):
+        asyncio.run(runner.execute())
+    assert runner.next_role() is None and fresh.stop=="budget_stop"
+
+
+def test_task_guard_rejects_wrong_branch_target_even_when_role_has_tool():
+    from agents.agent_orchestrator import Request,AgentType
+    from agents.retail_hooks import PrimaryOnlyHook
+    from types import SimpleNamespace
+    req = Request("check helmet","u","c",dag_tool_limit=frozenset({"get_item_details"}),
+                  dag_assignment={"kind":"product_info","target":"1665571435","output":"ventilation"})
+    ctx = SimpleNamespace(req=req,agent=SimpleNamespace(language="en",_tools_for_request=lambda req: req.dag_tool_limit))
+    guard = PrimaryOnlyHook()
+    assert guard.pre_tool(ctx,"get_item_details",{"item_id":"7420906769"})
+    assert guard.pre_tool(ctx,"get_item_details",{"item_id":"1665571435"}) is None
+
+
+def test_no_overlap_cannot_be_replaced_with_unrelated_user_chosen_item():
+    from core.retail_scheduler import Execution
+    from agents.retail_dag_runner import DagRunner
+    from agents.agent_orchestrator import Request
+    state = Execution.start(build([
+        dict(node("v"),output="variants"),dict(node("o","order_lookup"),output="item_ids"),
+        dict(node("s","product_info","v","o"),output="color")]))
+    for key,facts in [("v",{"variants":["111222"]}),("o",{"item_ids":["333444"]})]:
+        task = state.next_node(1)
+        assert task.id == key
+        state.runs[key].claim("technical",1)
+        state.runs[key].move(Status.SUCCEEDED,facts=facts,refs=("tool:1",))
+    runner = DagRunner(None,Request("color","u","c",turn=1),state)
+    assert runner.next_role() is None
+    assert state.runs["s"].status == Status.BLOCKED and state.runs["s"].reason == "no_matching_target"
+
+
+def test_unrepresented_else_action_is_rejected():
+    from core.retail_dag import Plan
+    rows = conditional_rows()
+    with pytest.raises(ValueError, match="branch"):
+        Plan.for_execution(rows[:2], COUNT_QUERY, "u","c")
+
+
+def test_specialist_with_no_capability_is_blocked_before_claim():
+    from agents.agent_orchestrator import Request
+    from agents.retail_dag_runner import DagRunner
+    from core.retail_scheduler import Execution
+    from tests.test_retail_dispatch import router
+
+    app = router("dag", [])
+    app.set_shared_tools({"calculate": object()})
+    row = dict(node("spec"), quote="111222 color", target="111222", output="color")
+    state = Execution.start(build([row]))
+    driver = DagRunner(app, Request("111222 color", "u", "c"), state)
+    assert driver.next_role() is None
+    assert (state.runs["spec"].reason, state.runs["spec"].attempt) == ("capability_unavailable", 0)

@@ -295,7 +295,7 @@ def retail_tools(
                         or (op and (WRITE_KINDS[name] != op["kind"] or canonical_args(op["kind"], args) != op["args"]))):
                     return {"success": False, "error": "action outside the assigned task"}
                 return store.write_action(req.user_id, req.conv_id, name, dict(args), req.message,
-                                          allow_execute=bool(op), expected_op_id=op.get("op_id", ""))
+                                          allow_execute=bool(op), expected_op_id=op.get("op_id", ""), dag_ticket=req.dag_ticket)
             return store.write_action(req.user_id, req.conv_id, name, dict(args), req.message)
         return handler
 

@@ -707,6 +707,10 @@ class RetailStore:
                 plan_id TEXT PRIMARY KEY, client TEXT NOT NULL, conversation TEXT NOT NULL,
                 revision INTEGER NOT NULL, active INTEGER NOT NULL, payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS dag_operations (
+                plan_id TEXT NOT NULL, task_id TEXT NOT NULL, turn INTEGER NOT NULL,
+                op_id TEXT NOT NULL UNIQUE, PRIMARY KEY(plan_id,task_id,turn)
+            );
             CREATE INDEX IF NOT EXISTS dag_session ON dag_executions(client,conversation,active);
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,
@@ -1768,8 +1772,30 @@ class RetailStore:
                 (client_user_id, conv_id, int(turn), op_id)).fetchone()
         return dict(row) if row else None
 
+    @staticmethod
+    def _valid_dag_claim(connection, client, conversation, ticket):
+        if ticket is None:
+            return True
+        plan_id, task_id, revision, turn = ticket
+        row = connection.execute(
+            "SELECT d.payload,s.turn_count,s.retail_user_id FROM dag_executions d "
+            "JOIN sessions s ON s.client_user_id=d.client AND s.conv_id=d.conversation "
+            "WHERE d.plan_id=? AND d.client=? AND d.conversation=? AND d.revision=? AND d.active=1",
+            (plan_id, client, conversation, revision)).fetchone()
+        if not row or row["turn_count"] != turn:
+            return False
+        state = json.loads(row["payload"])
+        run = state["runs"].get(task_id) or {}
+        return state["bound_user"] == row["retail_user_id"] and run.get("turn") == turn and run.get("status") == "running"
+
+    def prepared_for_task(self, plan_id, task_id, turn):
+        with closing(self._connect()) as connection:
+            row = connection.execute("SELECT op_id FROM dag_operations WHERE plan_id=? AND task_id=? AND turn=?",
+                                     (plan_id, task_id, turn)).fetchone()
+        return row["op_id"] if row else None
+
     def write_action(self, client_user_id: str, conv_id: str, tool_name: str, raw_args: Dict[str, Any],
-                     user_message: str, *, allow_execute: bool = True, expected_op_id: str = "") -> Dict[str, Any]:
+                     user_message: str, *, allow_execute: bool = True, expected_op_id: str = "", dag_ticket=None) -> Dict[str, Any]:
         """写工具统一入口：首次调用生成待确认详情；展示后经本轮确认、参数一致的再次调用才执行。"""
         kind = WRITE_KINDS[tool_name]
         turn = self.current_turn(client_user_id, conv_id)
@@ -1787,14 +1813,15 @@ class RetailStore:
                     (client_user_id, conv_id, kind, args_json)).fetchone()
         except (RetailStoreError, DomainError) as ex:
             return {"success": False, "error": str(ex)}
-        if expected_op_id and (displayed is None or displayed["op_id"] != expected_op_id):
+        if expected_op_id and (displayed is None or displayed["op_id"] != expected_op_id
+                               or not allow_execute or displayed["displayed_turn"] >= turn):
             return {"success": False, "error": "pending operation changed"}
         if displayed is not None and allow_execute and int(displayed["displayed_turn"] or turn) < turn:
-            return self._execute_action(client_user_id, conv_id, kind, dict(displayed), user_message, turn)
-        return self._prepare_action(client_user_id, conv_id, kind, args, turn)
+            return self._execute_action(client_user_id, conv_id, kind, dict(displayed), user_message, turn, dag_ticket)
+        return self._prepare_action(client_user_id, conv_id, kind, args, turn, dag_ticket)
 
     def _prepare_action(self, client_user_id: str, conv_id: str, kind: str, args: Dict[str, Any],
-                        turn: int) -> Dict[str, Any]:
+                        turn: int, dag_ticket=None) -> Dict[str, Any]:
         try:
             with closing(self._connect()) as connection:
                 user_id = self._require_binding(connection, client_user_id, conv_id)
@@ -1818,6 +1845,13 @@ class RetailStore:
         now = _now()
         with self._tx() as connection:
             self._ensure_session(connection, client_user_id, conv_id)
+            if not self._valid_dag_claim(connection, client_user_id, conv_id, dag_ticket):
+                return {"success": False, "error": "DAG claim expired"}
+            if dag_ticket:
+                owned = connection.execute("INSERT OR IGNORE INTO dag_operations VALUES (?,?,?,?)",
+                                           (dag_ticket[0], dag_ticket[1], turn, op_id))
+                if not owned.rowcount:
+                    return {"success": False, "error": "DAG operation already prepared"}
             previous = connection.execute(
                 "SELECT op_id FROM pending_actions WHERE client_user_id=? AND conv_id=? AND target_key=?"
                 " AND status IN ('prepared', 'displayed')", (client_user_id, conv_id, target_key)).fetchall()
@@ -1847,7 +1881,7 @@ class RetailStore:
                     "arguments to carry it out.")}
 
     def _execute_action(self, client_user_id: str, conv_id: str, kind: str, pending: Dict[str, Any],
-                        user_message: str, turn: int) -> Dict[str, Any]:
+                        user_message: str, turn: int, dag_ticket=None) -> Dict[str, Any]:
         op_id = str(pending["op_id"])
         if int(pending["prepared_turn"]) >= turn:
             return {"success": False, "error": self._t("准备详情的同一轮不能执行；请等待用户确认。",
@@ -1874,6 +1908,11 @@ class RetailStore:
                         f"details{target} carried out unchanged, reply in a new message: Yes, please proceed as listed.")}
         try:
             with self._tx() as connection:
+                if not self._valid_dag_claim(connection, client_user_id, conv_id, dag_ticket):
+                    return {"success": False, "error": "DAG claim expired"}
+                owner = connection.execute("SELECT plan_id,task_id FROM dag_operations WHERE op_id=?", (op_id,)).fetchone()
+                if owner and (not dag_ticket or tuple(owner) != dag_ticket[:2]):
+                    return {"success": False, "error": "confirmation belongs to another task"}
                 row = connection.execute("SELECT * FROM pending_actions WHERE op_id=?", (op_id,)).fetchone()
                 if row is None or row["status"] != "displayed":
                     raise RetailStoreError(self._t("该确认已使用或待确认状态已变化",

@@ -129,7 +129,7 @@ class RetailWorkflow:
 
     @staticmethod
     def _reset_roles(call):
-        return {"active_role": "", "next_role": "", "role_queue": [], "handoff": {},
+        return {"plan_id": "", "active_role": "", "next_role": "", "role_queue": [], "handoff": {},
                 "role_result": call.get("previous_role_result", {})}
 
     async def _select_role(self, state):
@@ -320,13 +320,15 @@ class RetailWorkflow:
         unknown = ("unknown_action_result" in result.response_guard.get("findings", []) or
                    (bool(call.get("role_error")) and bool(guard.get("state_op_entered") or guard.get("unknown_result"))))
         extra = {}
+        dag = call.get("dag")
+        dag_wait = dag.state.stop if dag and dag.state.stop in {"choose_target", "identity_required"} else ""
         if state.get("handoff"):
             old = state["handoff"]
             extra["handoff"] = build_role_handoff(self.service.store, call["context"]["request"],
                                                  old.get("previous_role"), old["to_role"])
-        return self._step(state, "update_result", **extra, phase="waiting" if waiting else "complete",
+        return self._step(state, "update_result", **extra, phase="waiting" if waiting or dag_wait else "complete",
                           current_task="return" if pending or result.prepared_op_ids or state.get("current_task") == "return" else "retail",
-                          waiting_reason="return_confirmation" if waiting else "",
+                          waiting_reason="return_confirmation" if waiting else dag_wait,
                           pending_refs=[str(p["op_id"]) for p in pending],
                           result={"request_id": result.request_id, "success": result.success, "unknown": unknown,
                                   "tools_used": result.tools_used, "escalated": result.escalated})
@@ -346,6 +348,25 @@ class RetailWorkflow:
     async def _recover_result(self, state):
         from agents.retail_agent import RetailTurnResult
         call = self._call.get()
+        store = self.service.store
+        if self._uses_roles() and getattr(self.service.agent.orchestrator, "routing_mode", None) == "dag":
+            from agents.agent_orchestrator import Request
+            for execution in store.open_dags(call["user"], call["conv"]):
+                if state.get("plan_id") and execution.plan.id != state["plan_id"]:
+                    continue
+                bound = store.bound_user_id(call["user"], call["conv"])
+                if execution.bound_user and bound != execution.bound_user:
+                    continue
+                req = Request(call["message"], call["user"], call["conv"], retail_store=store,
+                              retail_user_id=bound, turn=store.current_turn(call["user"],call["conv"]))
+                runner = DagRunner(self.service.agent.orchestrator, req, execution)
+                runner.reconcile()
+                outcome = runner.finish()
+                call["result"] = RetailTurnResult(response=outcome.response, success=outcome.success,
+                    agent_type=AgentType.RETAIL, request_id=req.request_id, turn=req.turn, latency_ms=0,
+                    semantic_routing=req.retail_routing)
+                return self._step(state, "recover_result", phase="reconciled", plan_id=execution.plan.id,
+                                  waiting_reason="", result={"success": outcome.success})
         # 非等待点崩溃可能已完成写入：只读权威事件，不重跑 Agent 或工具。
         events = self.service.store.list_events(call["user"], call["conv"])
         known = [e for e in events if e["event_type"] == "return_requested"]
@@ -385,6 +406,7 @@ class RetailWorkflow:
                     "current_input": message, "phase": "recovering" if recovering else "input",
                     "node_path": [], "waiting_reason": "", "result": {}, "pending_refs": [],
                     **(self._reset_roles(call) if self._uses_roles() else {}),
+                    **({"plan_id": snapshot.values.get("plan_id", "")} if recovering else {}),
                 }
                 output = await self._graph.ainvoke(value, config)
                 snapshot = await self._graph.aget_state(config)
