@@ -1,0 +1,448 @@
+{
+  "$defs": {
+    "BillingRead": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "quote": {
+          "description": "Verbatim user span. For conditional actions use exactly the action without if, then, otherwise, or terminal punctuation.",
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "depends_on": {
+          "description": "Direct prerequisites only. [] for an independent action.",
+          "items": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+            "type": "string"
+          },
+          "maxItems": 12,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "target": {
+          "description": "Literal identifier from the span. For order reads and order transactions use the order ID, for variants lists the product ID, for a specification the item/variant ID. Use an empty string for a target supplied by predecessors.",
+          "maxLength": 128,
+          "title": "Target",
+          "type": "string"
+        },
+        "run_if": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Branch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required on both conditional actions. Omit on unconditional actions."
+        },
+        "kind": {
+          "const": "billing_lookup",
+          "title": "Kind",
+          "type": "string"
+        },
+        "output": {
+          "enum": [
+            "order_id",
+            "status",
+            "purchased_item_count",
+            "item_ids",
+            "payment_type"
+          ],
+          "title": "Output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "quote",
+        "depends_on",
+        "target",
+        "kind",
+        "output"
+      ],
+      "title": "BillingRead",
+      "type": "object"
+    },
+    "Branch": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "description": "Direct predecessor providing the tested fact.",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+          "title": "Source",
+          "type": "string"
+        },
+        "branch": {
+          "description": "Polarity of this exact action in the original conditional.",
+          "enum": [
+            "then",
+            "else"
+          ],
+          "title": "Branch",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "branch"
+      ],
+      "title": "Branch",
+      "type": "object"
+    },
+    "Catalog": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "quote": {
+          "description": "Verbatim user span. For conditional actions use exactly the action without if, then, otherwise, or terminal punctuation.",
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "depends_on": {
+          "description": "Direct prerequisites only. [] for an independent action.",
+          "items": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+            "type": "string"
+          },
+          "maxItems": 12,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "target": {
+          "description": "Literal identifier from the span. For order reads and order transactions use the order ID, for variants lists the product ID, for a specification the item/variant ID. Use an empty string for a target supplied by predecessors.",
+          "maxLength": 128,
+          "title": "Target",
+          "type": "string"
+        },
+        "run_if": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Branch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required on both conditional actions. Omit on unconditional actions."
+        },
+        "kind": {
+          "const": "product_info",
+          "title": "Kind",
+          "type": "string"
+        },
+        "output": {
+          "enum": [
+            "variants",
+            "ventilation",
+            "sensor_type",
+            "size",
+            "color"
+          ],
+          "title": "Output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "quote",
+        "depends_on",
+        "target",
+        "kind",
+        "output"
+      ],
+      "title": "Catalog",
+      "type": "object"
+    },
+    "Change": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "quote": {
+          "description": "Verbatim user span. For conditional actions use exactly the action without if, then, otherwise, or terminal punctuation.",
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "depends_on": {
+          "description": "Direct prerequisites only. [] for an independent action.",
+          "items": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+            "type": "string"
+          },
+          "maxItems": 12,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "target": {
+          "description": "Literal identifier from the span. For order reads and order transactions use the order ID, for variants lists the product ID, for a specification the item/variant ID. Use an empty string for a target supplied by predecessors.",
+          "maxLength": 128,
+          "title": "Target",
+          "type": "string"
+        },
+        "run_if": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Branch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required on both conditional actions. Omit on unconditional actions."
+        },
+        "kind": {
+          "enum": [
+            "order_change",
+            "return_change"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "output": {
+          "const": "executed",
+          "title": "Output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "quote",
+        "depends_on",
+        "target",
+        "kind",
+        "output"
+      ],
+      "title": "Change",
+      "type": "object"
+    },
+    "OrderRead": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "quote": {
+          "description": "Verbatim user span. For conditional actions use exactly the action without if, then, otherwise, or terminal punctuation.",
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "depends_on": {
+          "description": "Direct prerequisites only. [] for an independent action.",
+          "items": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+            "type": "string"
+          },
+          "maxItems": 12,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "target": {
+          "description": "Literal identifier from the span. For order reads and order transactions use the order ID, for variants lists the product ID, for a specification the item/variant ID. Use an empty string for a target supplied by predecessors.",
+          "maxLength": 128,
+          "title": "Target",
+          "type": "string"
+        },
+        "run_if": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Branch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required on both conditional actions. Omit on unconditional actions."
+        },
+        "kind": {
+          "const": "order_lookup",
+          "title": "Kind",
+          "type": "string"
+        },
+        "output": {
+          "enum": [
+            "order_id",
+            "status",
+            "purchased_item_count",
+            "item_ids"
+          ],
+          "title": "Output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "quote",
+        "depends_on",
+        "target",
+        "kind",
+        "output"
+      ],
+      "title": "OrderRead",
+      "type": "object"
+    },
+    "Policy": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "quote": {
+          "description": "Verbatim user span. For conditional actions use exactly the action without if, then, otherwise, or terminal punctuation.",
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Quote",
+          "type": "string"
+        },
+        "depends_on": {
+          "description": "Direct prerequisites only. [] for an independent action.",
+          "items": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+            "type": "string"
+          },
+          "maxItems": 12,
+          "title": "Depends On",
+          "type": "array"
+        },
+        "target": {
+          "description": "Literal identifier from the span. For order reads and order transactions use the order ID, for variants lists the product ID, for a specification the item/variant ID. Use an empty string for a target supplied by predecessors.",
+          "maxLength": 128,
+          "title": "Target",
+          "type": "string"
+        },
+        "run_if": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Branch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Required on both conditional actions. Omit on unconditional actions."
+        },
+        "kind": {
+          "enum": [
+            "general_policy",
+            "return_policy"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "output": {
+          "const": "policy",
+          "title": "Output",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "quote",
+        "depends_on",
+        "target",
+        "kind",
+        "output"
+      ],
+      "title": "Policy",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "intent": {
+      "enum": [
+        "order_status",
+        "refund",
+        "query",
+        "human_handoff",
+        "greeting",
+        "other"
+      ],
+      "title": "Intent",
+      "type": "string"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "reasoning": {
+      "default": "",
+      "maxLength": 512,
+      "title": "Reasoning",
+      "type": "string"
+    },
+    "subtasks": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "billing_lookup": "#/$defs/BillingRead",
+            "general_policy": "#/$defs/Policy",
+            "order_change": "#/$defs/Change",
+            "order_lookup": "#/$defs/OrderRead",
+            "product_info": "#/$defs/Catalog",
+            "return_change": "#/$defs/Change",
+            "return_policy": "#/$defs/Policy"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/OrderRead"
+          },
+          {
+            "$ref": "#/$defs/BillingRead"
+          },
+          {
+            "$ref": "#/$defs/Catalog"
+          },
+          {
+            "$ref": "#/$defs/Policy"
+          },
+          {
+            "$ref": "#/$defs/Change"
+          }
+        ]
+      },
+      "maxItems": 12,
+      "title": "Subtasks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "intent",
+    "confidence",
+    "subtasks"
+  ],
+  "title": "DagResponse",
+  "type": "object"
+}

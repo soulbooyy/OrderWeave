@@ -1,0 +1,363 @@
+{
+  "commit": "5a2f127110d6f6ee4030a25070e7633c8e67a6b3",
+  "supported": 8,
+  "first_json": 8,
+  "first_structure": 8,
+  "first_semantic": 8,
+  "final_passed": 8,
+  "exact": 8,
+  "metrics": {
+    "nodes": {
+      "correct": 20,
+      "predicted": 20,
+      "expected": 20,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "edges": {
+      "correct": 11,
+      "predicted": 11,
+      "expected": 11,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "conditions": {
+      "correct": 6,
+      "predicted": 6,
+      "expected": 6,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    }
+  },
+  "rejected": {
+    "P09": "semantic_error",
+    "P10": "semantic_error"
+  },
+  "gate": true,
+  "rows": [
+    {
+      "key": "P01",
+      "first": "ok",
+      "final": "first_pass",
+      "grades": {
+        "v1": {
+          "nodes_expected": 3,
+          "nodes_predicted": 3,
+          "nodes_correct": 3,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 2,
+          "edges_predicted": 2,
+          "edges_correct": 2,
+          "conditions_expected": 2,
+          "conditions_predicted": 2,
+          "conditions_correct": 2,
+          "allowed_extra_edges": 0
+        },
+        "v2": {
+          "nodes_expected": 3,
+          "nodes_predicted": 3,
+          "nodes_correct": 3,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 2,
+          "edges_predicted": 2,
+          "edges_correct": 2,
+          "conditions_expected": 2,
+          "conditions_predicted": 2,
+          "conditions_correct": 2,
+          "allowed_extra_edges": 0
+        }
+      }
+    },
+    {
+      "key": "P02",
+      "first": "ok",
+      "final": "first_pass",
+      "grades": {
+        "v1": {
+          "nodes_expected": 3,
+          "nodes_predicted": 3,
+          "nodes_correct": 3,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 2,
+          "edges_predicted": 2,
+          "edges_correct": 2,
+          "conditions_expected": 2,
+          "conditions_predicted": 2,
+          "conditions_correct": 2,
+          "allowed_extra_edges": 0
+        },
+        "v2": {
+          "nodes_expected": 3,
+          "nodes_predicted": 3,
+          "nodes_correct": 3,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 2,
+          "edges_predicted": 2,
+          "edges_correct": 2,
+          "conditions_expected": 2,
+          "conditions_predicted": 2,
+          "conditions_correct": 2,
+          "allowed_extra_edges": 0
+        }
+      }
+    },
+    {
+      "key": "P03",
+      "first": "ok",
+      "final": "first_pass",
+      "grades": {
+        "v1": {
+          "nodes_expected": 3,
+          "nodes_predicted": 3,
+          "nodes_correct": 3,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 2,
+          "edges_predicted": 2,
+          "edges_correct": 2,
+          "conditions_expected": 0,
+          "conditions_predicted": 0,
+          "conditions_correct": 0,
+          "allowed_extra_edges": 0
+        },
+        "v2": {
+          "nodes_expected": 3,
+          "nodes_predicted": 3,
+          "nodes_correct": 3,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 2,
+          "edges_predicted": 2,
+          "edges_correct": 2,
+          "conditions_expected": 0,
+          "conditions_predicted": 0,
+          "conditions_correct": 0,
+          "allowed_extra_edges": 0
+        }
+      }
+    },
+    {
+      "key": "P04",
+      "first": "ok",
+      "final": "first_pass",
+      "grades": {
+        "v1": {
+          "nodes_expected": 3,
+          "nodes_predicted": 3,
+          "nodes_correct": 3,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 2,
+          "edges_predicted": 2,
+          "edges_correct": 2,
+          "conditions_expected": 0,
+          "conditions_predicted": 0,
+          "conditions_correct": 0,
+          "allowed_extra_edges": 0
+        },
+        "v2": {
+          "nodes_expected": 3,
+          "nodes_predicted": 3,
+          "nodes_correct": 3,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 2,
+          "edges_predicted": 2,
+          "edges_correct": 2,
+          "conditions_expected": 0,
+          "conditions_predicted": 0,
+          "conditions_correct": 0,
+          "allowed_extra_edges": 0
+        }
+      }
+    },
+    {
+      "key": "P05",
+      "first": "ok",
+      "final": "first_pass",
+      "grades": {
+        "v1": {
+          "nodes_expected": 3,
+          "nodes_predicted": 3,
+          "nodes_correct": 3,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 2,
+          "edges_predicted": 2,
+          "edges_correct": 2,
+          "conditions_expected": 2,
+          "conditions_predicted": 2,
+          "conditions_correct": 2,
+          "allowed_extra_edges": 0
+        },
+        "v2": {
+          "nodes_expected": 3,
+          "nodes_predicted": 3,
+          "nodes_correct": 3,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 2,
+          "edges_predicted": 2,
+          "edges_correct": 2,
+          "conditions_expected": 2,
+          "conditions_predicted": 2,
+          "conditions_correct": 2,
+          "allowed_extra_edges": 0
+        }
+      }
+    },
+    {
+      "key": "P06",
+      "first": "ok",
+      "final": "first_pass",
+      "grades": {
+        "v1": {
+          "nodes_expected": 1,
+          "nodes_predicted": 1,
+          "nodes_correct": 1,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 0,
+          "edges_predicted": 0,
+          "edges_correct": 0,
+          "conditions_expected": 0,
+          "conditions_predicted": 0,
+          "conditions_correct": 0,
+          "allowed_extra_edges": 0
+        },
+        "v2": {
+          "nodes_expected": 1,
+          "nodes_predicted": 1,
+          "nodes_correct": 1,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 0,
+          "edges_predicted": 0,
+          "edges_correct": 0,
+          "conditions_expected": 0,
+          "conditions_predicted": 0,
+          "conditions_correct": 0,
+          "allowed_extra_edges": 0
+        }
+      }
+    },
+    {
+      "key": "P07",
+      "first": "ok",
+      "final": "first_pass",
+      "grades": {
+        "v1": {
+          "nodes_expected": 2,
+          "nodes_predicted": 2,
+          "nodes_correct": 2,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 0,
+          "edges_predicted": 0,
+          "edges_correct": 0,
+          "conditions_expected": 0,
+          "conditions_predicted": 0,
+          "conditions_correct": 0,
+          "allowed_extra_edges": 0
+        },
+        "v2": {
+          "nodes_expected": 2,
+          "nodes_predicted": 2,
+          "nodes_correct": 2,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 0,
+          "edges_predicted": 0,
+          "edges_correct": 0,
+          "conditions_expected": 0,
+          "conditions_predicted": 0,
+          "conditions_correct": 0,
+          "allowed_extra_edges": 0
+        }
+      }
+    },
+    {
+      "key": "P08",
+      "first": "ok",
+      "final": "first_pass",
+      "grades": {
+        "v1": {
+          "nodes_expected": 2,
+          "nodes_predicted": 2,
+          "nodes_correct": 2,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 1,
+          "edges_predicted": 1,
+          "edges_correct": 1,
+          "conditions_expected": 0,
+          "conditions_predicted": 0,
+          "conditions_correct": 0,
+          "allowed_extra_edges": 0
+        },
+        "v2": {
+          "nodes_expected": 2,
+          "nodes_predicted": 2,
+          "nodes_correct": 2,
+          "ambiguous": 0,
+          "contract_ok": true,
+          "contract_reason": "",
+          "exact": true,
+          "edges_expected": 1,
+          "edges_predicted": 1,
+          "edges_correct": 1,
+          "conditions_expected": 0,
+          "conditions_predicted": 0,
+          "conditions_correct": 0,
+          "allowed_extra_edges": 0
+        }
+      }
+    }
+  ],
+  "requests": 12,
+  "spent": "0.03226720",
+  "cumulative": "4.99128340",
+  "remaining": "5.00871660",
+  "p50": 1.4057818125002086,
+  "p95": 3.3612841251306236,
+  "input_tokens": 31452,
+  "output_tokens": 1972,
+  "cache_read_tokens": 23680
+}

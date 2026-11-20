@@ -1,0 +1,942 @@
+{
+  "commit": "5a2f127110d6f6ee4030a25070e7633c8e67a6b3",
+  "cases": [
+    {
+      "key": "P01",
+      "responses": [
+        {
+          "id": "66612b31-d80e-434f-a2c5-f201542debee",
+          "content": [
+            {
+              "text": "{\"intent\":\"query\",\"confidence\":0.95,\"reasoning\":\"Two catalog lookups branch on the purchased item count from a receipt lookup.\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"Count all the items on receipt #W8750911\",\"depends_on\":[],\"target\":\"#W8750911\",\"kind\":\"order_lookup\",\"output\":\"purchased_item_count\"},{\"id\":\"b\",\"quote\":\"check the color of wall clock variant 9850781806\",\"depends_on\":[\"a\"],\"target\":\"9850781806\",\"run_if\":{\"source\":\"a\",\"branch\":\"then\"},\"kind\":\"product_info\",\"output\":\"color\"},{\"id\":\"c\",\"quote\":\"find the size of backpack variant 5917587651\",\"depends_on\":[\"a\"],\"target\":\"5917587651\",\"run_if\":{\"source\":\"a\",\"branch\":\"else\"},\"kind\":\"product_info\",\"output\":\"size\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 2594,
+            "output_tokens": 194,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      ],
+      "status": "first_pass",
+      "attempts": [
+        {
+          "attempt": 1,
+          "status": "ok"
+        }
+      ],
+      "compiled": [
+        {
+          "id": "a",
+          "quote": "Count all the items on receipt #W8750911",
+          "depends_on": [],
+          "target": "#W8750911",
+          "kind": "order_lookup",
+          "output": "purchased_item_count"
+        },
+        {
+          "id": "b",
+          "quote": "check the color of wall clock variant 9850781806",
+          "depends_on": [
+            "a"
+          ],
+          "target": "9850781806",
+          "run_if": {
+            "source": "a",
+            "quote": "If the order contains at most two items, check the color of wall clock variant 9850781806; otherwise find the size of backpack variant 5917587651"
+          },
+          "kind": "product_info",
+          "output": "color"
+        },
+        {
+          "id": "c",
+          "quote": "find the size of backpack variant 5917587651",
+          "depends_on": [
+            "a"
+          ],
+          "target": "5917587651",
+          "run_if": {
+            "source": "a",
+            "quote": "If the order contains at most two items, check the color of wall clock variant 9850781806; otherwise find the size of backpack variant 5917587651"
+          },
+          "kind": "product_info",
+          "output": "size"
+        }
+      ],
+      "seconds": 1.0830879169516265,
+      "ledger": [
+        {
+          "request_id": "req-e88e7477df0b",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.040032,
+          "actual_cny": 0.00674,
+          "input_tokens_upper": 11824,
+          "max_tokens": 2048,
+          "input_tokens": 2594,
+          "output_tokens": 194,
+          "input_tokens_main": 2594,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "c2a542f9a6530fcb307f4dad98ff88f7112d145af37dabbb95c7f5528275edf1",
+          "request_bytes": 11312,
+          "latency_ms": 1073.0,
+          "error": null,
+          "created_at": "2026-11-20T09:33:25.019654+00:00",
+          "settled_at": "2026-11-20T09:33:26.093830+00:00"
+        }
+      ]
+    },
+    {
+      "key": "P02",
+      "responses": [
+        {
+          "id": "f5d36d1a-9d12-4057-a1b8-26af077fc683",
+          "content": [
+            {
+              "text": "{\"intent\":\"order_status\",\"confidence\":0.95,\"reasoning\":\"查询订单商品件数，并根据件数条件查询不同变体的属性。\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"查订单 #W6885344 里的商品件数\",\"depends_on\":[],\"target\":\"#W6885344\",\"kind\":\"order_lookup\",\"output\":\"purchased_item_count\"},{\"id\":\"b\",\"quote\":\"查变体 3254583681 的颜色\",\"depends_on\":[\"a\"],\"target\":\"3254583681\",\"run_if\":{\"source\":\"a\",\"branch\":\"then\"},\"kind\":\"product_info\",\"output\":\"color\"},{\"id\":\"c\",\"quote\":\"查变体 7907773809 的尺寸\",\"depends_on\":[\"a\"],\"target\":\"7907773809\",\"run_if\":{\"source\":\"a\",\"branch\":\"else\"},\"kind\":\"product_info\",\"output\":\"size\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 2605,
+            "output_tokens": 195,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "service_tier": "standard"
+          }
+        }
+      ],
+      "status": "first_pass",
+      "attempts": [
+        {
+          "attempt": 1,
+          "status": "ok"
+        }
+      ],
+      "compiled": [
+        {
+          "id": "a",
+          "quote": "查订单 #W6885344 里的商品件数",
+          "depends_on": [],
+          "target": "#W6885344",
+          "kind": "order_lookup",
+          "output": "purchased_item_count"
+        },
+        {
+          "id": "b",
+          "quote": "查变体 3254583681 的颜色",
+          "depends_on": [
+            "a"
+          ],
+          "target": "3254583681",
+          "run_if": {
+            "source": "a",
+            "quote": "如果订单少于 2 件商品，就查变体 3254583681 的颜色，否则查变体 7907773809 的尺寸"
+          },
+          "kind": "product_info",
+          "output": "color"
+        },
+        {
+          "id": "c",
+          "quote": "查变体 7907773809 的尺寸",
+          "depends_on": [
+            "a"
+          ],
+          "target": "7907773809",
+          "run_if": {
+            "source": "a",
+            "quote": "如果订单少于 2 件商品，就查变体 3254583681 的颜色，否则查变体 7907773809 的尺寸"
+          },
+          "kind": "product_info",
+          "output": "size"
+        }
+      ],
+      "seconds": 1.60868962504901,
+      "ledger": [
+        {
+          "request_id": "req-f4e00878077f",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.039944,
+          "actual_cny": 0.00677,
+          "input_tokens_upper": 11780,
+          "max_tokens": 2048,
+          "input_tokens": 2605,
+          "output_tokens": 195,
+          "input_tokens_main": 2605,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "c9a816849802a41fcf5dc024f952da5399ccad210bc64bc2241381ebc57730fa",
+          "request_bytes": 11268,
+          "latency_ms": 1600.0,
+          "error": null,
+          "created_at": "2026-11-20T09:33:26.105612+00:00",
+          "settled_at": "2026-11-20T09:33:27.707399+00:00"
+        }
+      ]
+    },
+    {
+      "key": "P03",
+      "responses": [
+        {
+          "id": "7b28b18f-73f1-4d17-9813-ad7dca23153b",
+          "content": [
+            {
+              "text": "{\"intent\":\"query\",\"confidence\":0.9,\"reasoning\":\"Sequential catalog and order lookups to identify a matched variant's color; no transaction or policy question.\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"list the variants for speaker product 4768869376\",\"depends_on\":[],\"target\":\"4768869376\",\"kind\":\"product_info\",\"output\":\"variants\"},{\"id\":\"b\",\"quote\":\"identify the matching purchased item IDs on order #W6750959\",\"depends_on\":[\"a\"],\"target\":\"#W6750959\",\"kind\":\"order_lookup\",\"output\":\"item_ids\"},{\"id\":\"c\",\"quote\":\"get the color of the matched speaker variant\",\"depends_on\":[\"b\"],\"target\":\"\",\"kind\":\"product_info\",\"output\":\"color\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 288,
+            "output_tokens": 169,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2304,
+            "service_tier": "standard"
+          }
+        }
+      ],
+      "status": "first_pass",
+      "attempts": [
+        {
+          "attempt": 1,
+          "status": "ok"
+        }
+      ],
+      "compiled": [
+        {
+          "id": "a",
+          "quote": "list the variants for speaker product 4768869376",
+          "depends_on": [],
+          "target": "4768869376",
+          "kind": "product_info",
+          "output": "variants"
+        },
+        {
+          "id": "b",
+          "quote": "identify the matching purchased item IDs on order #W6750959",
+          "depends_on": [
+            "a"
+          ],
+          "target": "#W6750959",
+          "kind": "order_lookup",
+          "output": "item_ids"
+        },
+        {
+          "id": "c",
+          "quote": "get the color of the matched speaker variant",
+          "depends_on": [
+            "b"
+          ],
+          "target": "",
+          "kind": "product_info",
+          "output": "color"
+        }
+      ],
+      "seconds": 1.144493125146255,
+      "ledger": [
+        {
+          "request_id": "req-ebd3a84ffbae",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.040057999999999996,
+          "actual_cny": 0.00202016,
+          "input_tokens_upper": 11837,
+          "max_tokens": 2048,
+          "input_tokens": 2592,
+          "output_tokens": 169,
+          "input_tokens_main": 288,
+          "cache_read_tokens": 2304,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "f18b3b2071262d698ecacb0507dc027e29e827bc9c26df7883cbfa845eacaca8",
+          "request_bytes": 11325,
+          "latency_ms": 1135.6,
+          "error": null,
+          "created_at": "2026-11-20T09:33:27.717506+00:00",
+          "settled_at": "2026-11-20T09:33:28.855134+00:00"
+        }
+      ]
+    },
+    {
+      "key": "P04",
+      "responses": [
+        {
+          "id": "9e2b522e-eafa-49a5-9700-50ba62d9d0ab",
+          "content": [
+            {
+              "text": "{\"intent\":\"order_status\",\"confidence\":0.9,\"reasoning\":\"用户要求查询商品变体、订单已购商品编号，并在两者齐全后查询唯一匹配变体的颜色；均为读取事实，不涉及办理。\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"列出商品 1075968781 的变体编号\",\"depends_on\":[],\"target\":\"1075968781\",\"kind\":\"product_info\",\"output\":\"variants\"},{\"id\":\"b\",\"quote\":\"查订单 #W7678072 的已购商品编号\",\"depends_on\":[],\"target\":\"#W7678072\",\"kind\":\"order_lookup\",\"output\":\"item_ids\"},{\"id\":\"c\",\"quote\":\"查唯一匹配变体的颜色\",\"depends_on\":[\"a\",\"b\"],\"target\":\"\",\"kind\":\"product_info\",\"output\":\"color\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 294,
+            "output_tokens": 179,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2304,
+            "service_tier": "standard"
+          }
+        }
+      ],
+      "status": "first_pass",
+      "attempts": [
+        {
+          "attempt": 1,
+          "status": "ok"
+        }
+      ],
+      "compiled": [
+        {
+          "id": "a",
+          "quote": "列出商品 1075968781 的变体编号",
+          "depends_on": [],
+          "target": "1075968781",
+          "kind": "product_info",
+          "output": "variants"
+        },
+        {
+          "id": "b",
+          "quote": "查订单 #W7678072 的已购商品编号",
+          "depends_on": [],
+          "target": "#W7678072",
+          "kind": "order_lookup",
+          "output": "item_ids"
+        },
+        {
+          "id": "c",
+          "quote": "查唯一匹配变体的颜色",
+          "depends_on": [
+            "a",
+            "b"
+          ],
+          "target": "",
+          "kind": "product_info",
+          "output": "color"
+        }
+      ],
+      "seconds": 1.4337317920289934,
+      "ledger": [
+        {
+          "request_id": "req-8bf3c8a14e48",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.039944,
+          "actual_cny": 0.0021121599999999996,
+          "input_tokens_upper": 11780,
+          "max_tokens": 2048,
+          "input_tokens": 2598,
+          "output_tokens": 179,
+          "input_tokens_main": 294,
+          "cache_read_tokens": 2304,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "ef4c587ec398671fcdadc4c9f0c10d0d1f56af8b99539081faa5777a7354cd2c",
+          "request_bytes": 11268,
+          "latency_ms": 1426.5,
+          "error": null,
+          "created_at": "2026-11-20T09:33:28.864578+00:00",
+          "settled_at": "2026-11-20T09:33:30.292352+00:00"
+        }
+      ]
+    },
+    {
+      "key": "P05",
+      "responses": [
+        {
+          "id": "d0490e5a-2c03-4120-82b8-617c6db5a1f0",
+          "content": [
+            {
+              "text": "{\"intent\":\"refund\",\"confidence\":0.95,\"reasoning\":\"Conditional request: read ventilation, then either prepare a return or look up order status.\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"Read the ventilation rating of helmet variant 8153356023\",\"depends_on\":[],\"target\":\"8153356023\",\"kind\":\"product_info\",\"output\":\"ventilation\"},{\"id\":\"b\",\"quote\":\"prepare a return of item 8153356023 from order #W4892278 to gift_card_5501047\",\"depends_on\":[\"a\"],\"target\":\"#W4892278\",\"run_if\":{\"source\":\"a\",\"branch\":\"then\"},\"kind\":\"return_change\",\"output\":\"executed\"},{\"id\":\"c\",\"quote\":\"look up the status of receipt #W4892278\",\"depends_on\":[\"a\"],\"target\":\"#W4892278\",\"run_if\":{\"source\":\"a\",\"branch\":\"else\"},\"kind\":\"order_lookup\",\"output\":\"status\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 301,
+            "output_tokens": 210,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2304,
+            "service_tier": "standard"
+          }
+        }
+      ],
+      "status": "first_pass",
+      "attempts": [
+        {
+          "attempt": 1,
+          "status": "ok"
+        }
+      ],
+      "compiled": [
+        {
+          "id": "a",
+          "quote": "Read the ventilation rating of helmet variant 8153356023",
+          "depends_on": [],
+          "target": "8153356023",
+          "kind": "product_info",
+          "output": "ventilation"
+        },
+        {
+          "id": "b",
+          "quote": "prepare a return of item 8153356023 from order #W4892278 to gift_card_5501047",
+          "depends_on": [
+            "a"
+          ],
+          "target": "#W4892278",
+          "run_if": {
+            "source": "a",
+            "quote": "If the ventilation level is medium, prepare a return of item 8153356023 from order #W4892278 to gift_card_5501047; otherwise look up the status of receipt #W4892278"
+          },
+          "kind": "return_change",
+          "output": "executed"
+        },
+        {
+          "id": "c",
+          "quote": "look up the status of receipt #W4892278",
+          "depends_on": [
+            "a"
+          ],
+          "target": "#W4892278",
+          "run_if": {
+            "source": "a",
+            "quote": "If the ventilation level is medium, prepare a return of item 8153356023 from order #W4892278 to gift_card_5501047; otherwise look up the status of receipt #W4892278"
+          },
+          "kind": "order_lookup",
+          "output": "status"
+        }
+      ],
+      "seconds": 1.1029744590632617,
+      "ledger": [
+        {
+          "request_id": "req-e7e9655ef712",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.040102,
+          "actual_cny": 0.0023741599999999997,
+          "input_tokens_upper": 11859,
+          "max_tokens": 2048,
+          "input_tokens": 2605,
+          "output_tokens": 210,
+          "input_tokens_main": 301,
+          "cache_read_tokens": 2304,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "bc956cc18a2fd647a04826bb998398cd5cef0fad679288339a8b6037959615f7",
+          "request_bytes": 11347,
+          "latency_ms": 1094.2,
+          "error": null,
+          "created_at": "2026-11-20T09:33:30.300431+00:00",
+          "settled_at": "2026-11-20T09:33:31.396596+00:00"
+        }
+      ]
+    },
+    {
+      "key": "P06",
+      "responses": [
+        {
+          "id": "48100324-b06c-4a62-b760-8073b4b8a2cf",
+          "content": [
+            {
+              "text": "{\"intent\":\"order_status\",\"confidence\":0.97,\"reasoning\":\"用户明确表示不要取消订单，仅查询订单 #W8411016 的当前状态，属于订单状态查询。\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"告诉我订单 #W8411016 的当前状态\",\"depends_on\":[],\"target\":\"#W8411016\",\"kind\":\"order_lookup\",\"output\":\"status\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 271,
+            "output_tokens": 90,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2304,
+            "service_tier": "standard"
+          }
+        }
+      ],
+      "status": "first_pass",
+      "attempts": [
+        {
+          "attempt": 1,
+          "status": "ok"
+        }
+      ],
+      "compiled": [
+        {
+          "id": "a",
+          "quote": "告诉我订单 #W8411016 的当前状态",
+          "depends_on": [],
+          "target": "#W8411016",
+          "kind": "order_lookup",
+          "output": "status"
+        }
+      ],
+      "seconds": 1.1480221250094473,
+      "ledger": [
+        {
+          "request_id": "req-524601c12e69",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.039782,
+          "actual_cny": 0.0013541599999999999,
+          "input_tokens_upper": 11699,
+          "max_tokens": 2048,
+          "input_tokens": 2575,
+          "output_tokens": 90,
+          "input_tokens_main": 271,
+          "cache_read_tokens": 2304,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "a2b46891204df9638184716489fbb1b64cdbb20da0755117981d7c093aee495a",
+          "request_bytes": 11187,
+          "latency_ms": 1139.1,
+          "error": null,
+          "created_at": "2026-11-20T09:33:31.407314+00:00",
+          "settled_at": "2026-11-20T09:33:32.548360+00:00"
+        }
+      ]
+    },
+    {
+      "key": "P07",
+      "responses": [
+        {
+          "id": "82264369-e5a7-48f5-bfaf-f31c8961e4dc",
+          "content": [
+            {
+              "text": "{\"intent\":\"order_status\",\"confidence\":0.95,\"reasoning\":\"Two independent read-only lookups: payment method for an order and size of a variant.\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"check which payment method was used on order #W7841787\",\"depends_on\":[],\"target\":\"#W7841787\",\"kind\":\"billing_lookup\",\"output\":\"payment_type\"},{\"id\":\"b\",\"quote\":\"look up the size of helmet variant 7907773809\",\"depends_on\":[],\"target\":\"7907773809\",\"kind\":\"product_info\",\"output\":\"size\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 274,
+            "output_tokens": 129,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2304,
+            "service_tier": "standard"
+          }
+        }
+      ],
+      "status": "first_pass",
+      "attempts": [
+        {
+          "attempt": 1,
+          "status": "ok"
+        }
+      ],
+      "compiled": [
+        {
+          "id": "a",
+          "quote": "check which payment method was used on order #W7841787",
+          "depends_on": [],
+          "target": "#W7841787",
+          "kind": "billing_lookup",
+          "output": "payment_type"
+        },
+        {
+          "id": "b",
+          "quote": "look up the size of helmet variant 7907773809",
+          "depends_on": [],
+          "target": "7907773809",
+          "kind": "product_info",
+          "output": "size"
+        }
+      ],
+      "seconds": 1.3917833748273551,
+      "ledger": [
+        {
+          "request_id": "req-f9fda53d2cac",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.039896,
+          "actual_cny": 0.0016721599999999998,
+          "input_tokens_upper": 11756,
+          "max_tokens": 2048,
+          "input_tokens": 2578,
+          "output_tokens": 129,
+          "input_tokens_main": 274,
+          "cache_read_tokens": 2304,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "820cb060ab02f11beef54480ac49f33e9572e61dbedab41ccd87090aefcf1a28",
+          "request_bytes": 11244,
+          "latency_ms": 1382.9,
+          "error": null,
+          "created_at": "2026-11-20T09:33:32.558509+00:00",
+          "settled_at": "2026-11-20T09:33:33.943136+00:00"
+        }
+      ]
+    },
+    {
+      "key": "P08",
+      "responses": [
+        {
+          "id": "5717ac72-310e-4e1b-9083-94c70720ba26",
+          "content": [
+            {
+              "text": "{\"intent\":\"order_status\",\"confidence\":0.95,\"reasoning\":\"Two dependent reads: order item IDs, then product size from the returned item ID.\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"Read the purchased item IDs from my single-item order #W6885344\",\"depends_on\":[],\"target\":\"#W6885344\",\"kind\":\"order_lookup\",\"output\":\"item_ids\"},{\"id\":\"b\",\"quote\":\"use that returned item ID to find the backpack size\",\"depends_on\":[\"a\"],\"target\":\"\",\"kind\":\"product_info\",\"output\":\"size\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 271,
+            "output_tokens": 125,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2304,
+            "service_tier": "standard"
+          }
+        }
+      ],
+      "status": "first_pass",
+      "attempts": [
+        {
+          "attempt": 1,
+          "status": "ok"
+        }
+      ],
+      "compiled": [
+        {
+          "id": "a",
+          "quote": "Read the purchased item IDs from my single-item order #W6885344",
+          "depends_on": [],
+          "target": "#W6885344",
+          "kind": "order_lookup",
+          "output": "item_ids"
+        },
+        {
+          "id": "b",
+          "quote": "use that returned item ID to find the backpack size",
+          "depends_on": [
+            "a"
+          ],
+          "target": "",
+          "kind": "product_info",
+          "output": "size"
+        }
+      ],
+      "seconds": 1.419780250173062,
+      "ledger": [
+        {
+          "request_id": "req-cb2f3fa76cd8",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.0399,
+          "actual_cny": 0.00163416,
+          "input_tokens_upper": 11758,
+          "max_tokens": 2048,
+          "input_tokens": 2575,
+          "output_tokens": 125,
+          "input_tokens_main": 271,
+          "cache_read_tokens": 2304,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "e20434962da896461fd014ea2de02142e5cc272960e15e218a8707cd2f50cb54",
+          "request_bytes": 11246,
+          "latency_ms": 1411.4,
+          "error": null,
+          "created_at": "2026-11-20T09:33:33.953121+00:00",
+          "settled_at": "2026-11-20T09:33:35.366635+00:00"
+        }
+      ]
+    },
+    {
+      "key": "P09",
+      "responses": [
+        {
+          "id": "af3b8303-d039-47c4-9555-f5403dbe17b0",
+          "content": [
+            {
+              "text": "{\"intent\":\"refund\",\"confidence\":0.95,\"reasoning\":\"Conditional request: check order status, then either prepare a return or report status.\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"Check order #W4143549\",\"depends_on\":[],\"target\":\"#W4143549\",\"kind\":\"order_lookup\",\"output\":\"status\"},{\"id\":\"b\",\"quote\":\"prepare a return of item 6867855179\",\"depends_on\":[\"a\"],\"target\":\"6867855179\",\"run_if\":{\"source\":\"a\",\"branch\":\"then\"},\"kind\":\"return_change\",\"output\":\"executed\"},{\"id\":\"c\",\"quote\":\"tell me the current order status\",\"depends_on\":[\"a\"],\"target\":\"#W4143549\",\"run_if\":{\"source\":\"a\",\"branch\":\"else\"},\"kind\":\"order_lookup\",\"output\":\"status\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 277,
+            "output_tokens": 185,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2304,
+            "service_tier": "standard"
+          }
+        },
+        {
+          "id": "727d06d2-f611-4d2d-be91-c36e46ab0219",
+          "content": [
+            {
+              "text": "{\"intent\":\"refund\",\"confidence\":0.95,\"reasoning\":\"Conditional request: check order status, then either prepare a return or report status.\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"Check order #W4143549\",\"depends_on\":[],\"target\":\"#W4143549\",\"kind\":\"order_lookup\",\"output\":\"status\"},{\"id\":\"b\",\"quote\":\"prepare a return of item 6867855179\",\"depends_on\":[\"a\"],\"target\":\"#W4143549\",\"run_if\":{\"source\":\"a\",\"branch\":\"then\"},\"kind\":\"return_change\",\"output\":\"executed\"},{\"id\":\"c\",\"quote\":\"tell me the current order status\",\"depends_on\":[\"a\"],\"target\":\"#W4143549\",\"run_if\":{\"source\":\"a\",\"branch\":\"else\"},\"kind\":\"order_lookup\",\"output\":\"status\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 134,
+            "output_tokens": 186,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2688,
+            "service_tier": "standard"
+          }
+        }
+      ],
+      "status": "semantic_error",
+      "attempts": [
+        {
+          "attempt": 1,
+          "status": "semantic_error",
+          "errors": [
+            {
+              "code": "expected_order_id",
+              "path": "subtasks.1.target",
+              "reason": "Use the order ID, not the purchased item or payment ID."
+            }
+          ]
+        },
+        {
+          "attempt": 2,
+          "status": "semantic_error",
+          "errors": [
+            {
+              "code": "unverified_target",
+              "path": "subtasks.1.target",
+              "reason": "The quoted action must contain the complete literal target."
+            }
+          ]
+        }
+      ],
+      "compiled": null,
+      "seconds": 2.1338548748753965,
+      "ledger": [
+        {
+          "request_id": "req-ce1a14e7077a",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.039936,
+          "actual_cny": 0.0021261599999999998,
+          "input_tokens_upper": 11776,
+          "max_tokens": 2048,
+          "input_tokens": 2581,
+          "output_tokens": 185,
+          "input_tokens_main": 277,
+          "cache_read_tokens": 2304,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "406e1c7e1dba801292ff6641777388809862d16d7056b1cadb0c37b91b6ff7c4",
+          "request_bytes": 11264,
+          "latency_ms": 1146.4,
+          "error": null,
+          "created_at": "2026-11-20T09:33:35.375644+00:00",
+          "settled_at": "2026-11-20T09:33:36.523051+00:00"
+        },
+        {
+          "request_id": "req-f27cf8759000",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.041976,
+          "actual_cny": 0.00186352,
+          "input_tokens_upper": 12796,
+          "max_tokens": 2048,
+          "input_tokens": 2822,
+          "output_tokens": 186,
+          "input_tokens_main": 134,
+          "cache_read_tokens": 2688,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "d127aedffe2cd8824f95a0f123d9930eaa3327ed09af838bf92c75388b627031",
+          "request_bytes": 12284,
+          "latency_ms": 977.9,
+          "error": null,
+          "created_at": "2026-11-20T09:33:36.524600+00:00",
+          "settled_at": "2026-11-20T09:33:37.504090+00:00"
+        }
+      ]
+    },
+    {
+      "key": "P10",
+      "responses": [
+        {
+          "id": "48094560-9a89-4293-8bf0-45493be99291",
+          "content": [
+            {
+              "text": "{\"intent\":\"order_status\",\"confidence\":0.9,\"reasoning\":\"User asks to check order status first, then a conditional future cancellation or logistics info. The cancellation is conditional on a future feeling, not an explicit current request; logistics is a status query. Only the status lookup is a concrete current action.\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"查订单 #W6272294 的状态\",\"depends_on\":[],\"target\":\"#W6272294\",\"kind\":\"order_lookup\",\"output\":\"status\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 279,
+            "output_tokens": 111,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2304,
+            "service_tier": "standard"
+          }
+        },
+        {
+          "id": "f468d4d6-c49f-4393-9bfe-a4b2ad29296f",
+          "content": [
+            {
+              "text": "{\"intent\":\"order_status\",\"confidence\":0.9,\"reasoning\":\"User asks to check order status, then conditionally cancel the order if they later feel it unsuitable, otherwise report logistics. Both conditional branches are retained as guarded actions depending on the status lookup.\",\"subtasks\":[{\"id\":\"a\",\"quote\":\"查订单 #W6272294 的状态\",\"depends_on\":[],\"target\":\"#W6272294\",\"kind\":\"order_lookup\",\"output\":\"status\"},{\"id\":\"b\",\"quote\":\"取消该订单\",\"depends_on\":[\"a\"],\"target\":\"#W6272294\",\"run_if\":{\"source\":\"a\",\"branch\":\"then\"},\"kind\":\"order_change\",\"output\":\"executed\"},{\"id\":\"c\",\"quote\":\"告诉我物流情况\",\"depends_on\":[\"a\"],\"target\":\"#W6272294\",\"run_if\":{\"source\":\"a\",\"branch\":\"else\"},\"kind\":\"order_lookup\",\"output\":\"status\"}]}",
+              "type": "text"
+            }
+          ],
+          "model": "deepseek-flash",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "stop_sequence": null,
+          "type": "message",
+          "usage": {
+            "input_tokens": 184,
+            "output_tokens": 199,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 2560,
+            "service_tier": "standard"
+          }
+        }
+      ],
+      "status": "semantic_error",
+      "attempts": [
+        {
+          "attempt": 1,
+          "status": "semantic_error",
+          "errors": [
+            {
+              "code": "missing_branch_action",
+              "path": "subtasks",
+              "reason": "Every stated branch needs its own guarded action."
+            }
+          ]
+        },
+        {
+          "attempt": 2,
+          "status": "semantic_error",
+          "errors": [
+            {
+              "code": "unverified_target",
+              "path": "subtasks.1.target",
+              "reason": "The quoted action must contain the complete literal target."
+            }
+          ]
+        }
+      ],
+      "compiled": null,
+      "seconds": 3.3612841251306236,
+      "ledger": [
+        {
+          "request_id": "req-01cd307ca167",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.039878,
+          "actual_cny": 0.0015381599999999998,
+          "input_tokens_upper": 11747,
+          "max_tokens": 2048,
+          "input_tokens": 2583,
+          "output_tokens": 111,
+          "input_tokens_main": 279,
+          "cache_read_tokens": 2304,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "1bb37f22d9a2607f9f9a65514fa4b2424cf683d0a1f25822adbd9164165bfe9b",
+          "request_bytes": 11235,
+          "latency_ms": 1653.4,
+          "error": null,
+          "created_at": "2026-11-20T09:33:37.513112+00:00",
+          "settled_at": "2026-11-20T09:33:39.168240+00:00"
+        },
+        {
+          "request_id": "req-c0716521c106",
+          "stage": "intent",
+          "model": "deepseek-flash",
+          "status": "success",
+          "reserved_cny": 0.041429999999999995,
+          "actual_cny": 0.0020624000000000003,
+          "input_tokens_upper": 12523,
+          "max_tokens": 2048,
+          "input_tokens": 2744,
+          "output_tokens": 199,
+          "input_tokens_main": 184,
+          "cache_read_tokens": 2560,
+          "cache_write_tokens": 0,
+          "usage_present": 1,
+          "bound_violation": null,
+          "request_sha256": "3862d301f311a97e1cc740cfdeb775e194f2b9d294b910807042268de490ee25",
+          "request_bytes": 12011,
+          "latency_ms": 1695.1,
+          "error": null,
+          "created_at": "2026-11-20T09:33:39.170672+00:00",
+          "settled_at": "2026-11-20T09:33:40.867871+00:00"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,335 @@
+[
+  {
+    "key": "H01",
+    "first": "structure_error",
+    "errors": [
+      {
+        "code": "missing",
+        "path": "subtasks.1.run_if.branch",
+        "reason": "Field required"
+      },
+      {
+        "code": "extra_forbidden",
+        "path": "subtasks.1.run_if.quote",
+        "reason": "Extra inputs are not permitted"
+      },
+      {
+        "code": "missing",
+        "path": "subtasks.2.run_if.branch",
+        "reason": "Field required"
+      },
+      {
+        "code": "extra_forbidden",
+        "path": "subtasks.2.run_if.quote",
+        "reason": "Extra inputs are not permitted"
+      }
+    ],
+    "old_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 3,
+      "nodes_correct": 2,
+      "ambiguous": 0,
+      "contract_ok": false,
+      "contract_reason": "unverified_condition_quote",
+      "exact": false,
+      "edges_expected": 2,
+      "edges_predicted": 2,
+      "edges_correct": 0,
+      "conditions_expected": 2,
+      "conditions_predicted": 2,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    },
+    "normalized_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 3,
+      "nodes_correct": 3,
+      "ambiguous": 0,
+      "contract_ok": false,
+      "contract_reason": "unverified_condition_quote",
+      "exact": false,
+      "edges_expected": 2,
+      "edges_predicted": 2,
+      "edges_correct": 2,
+      "conditions_expected": 2,
+      "conditions_predicted": 2,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    }
+  },
+  {
+    "key": "H02",
+    "first": "structure_error",
+    "errors": [
+      {
+        "code": "missing",
+        "path": "subtasks",
+        "reason": "Field required"
+      }
+    ],
+    "old_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 0,
+      "nodes_correct": 0,
+      "ambiguous": 0,
+      "contract_ok": false,
+      "contract_reason": "invalid_task_list",
+      "exact": false,
+      "edges_expected": 2,
+      "edges_predicted": 0,
+      "edges_correct": 0,
+      "conditions_expected": 2,
+      "conditions_predicted": 0,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    },
+    "normalized_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 0,
+      "nodes_correct": 0,
+      "ambiguous": 0,
+      "contract_ok": false,
+      "contract_reason": "invalid_task_list",
+      "exact": false,
+      "edges_expected": 2,
+      "edges_predicted": 0,
+      "edges_correct": 0,
+      "conditions_expected": 2,
+      "conditions_predicted": 0,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    }
+  },
+  {
+    "key": "H03",
+    "first": "structure_error",
+    "errors": [
+      {
+        "code": "missing",
+        "path": "subtasks.2.target",
+        "reason": "Field required"
+      }
+    ],
+    "old_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 3,
+      "nodes_correct": 2,
+      "ambiguous": 0,
+      "contract_ok": true,
+      "contract_reason": "",
+      "exact": false,
+      "edges_expected": 2,
+      "edges_predicted": 2,
+      "edges_correct": 0,
+      "conditions_expected": 0,
+      "conditions_predicted": 0,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    },
+    "normalized_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 3,
+      "nodes_correct": 3,
+      "ambiguous": 0,
+      "contract_ok": true,
+      "contract_reason": "",
+      "exact": true,
+      "edges_expected": 2,
+      "edges_predicted": 2,
+      "edges_correct": 2,
+      "conditions_expected": 0,
+      "conditions_predicted": 0,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    }
+  },
+  {
+    "key": "H04",
+    "first": "structure_error",
+    "errors": [
+      {
+        "code": "missing",
+        "path": "subtasks.2.target",
+        "reason": "Field required"
+      }
+    ],
+    "old_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 3,
+      "nodes_correct": 2,
+      "ambiguous": 0,
+      "contract_ok": true,
+      "contract_reason": "",
+      "exact": false,
+      "edges_expected": 2,
+      "edges_predicted": 2,
+      "edges_correct": 1,
+      "conditions_expected": 0,
+      "conditions_predicted": 0,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    },
+    "normalized_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 3,
+      "nodes_correct": 3,
+      "ambiguous": 0,
+      "contract_ok": true,
+      "contract_reason": "",
+      "exact": true,
+      "edges_expected": 2,
+      "edges_predicted": 2,
+      "edges_correct": 2,
+      "conditions_expected": 0,
+      "conditions_predicted": 0,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    }
+  },
+  {
+    "key": "H05",
+    "first": "structure_error",
+    "errors": [
+      {
+        "code": "missing",
+        "path": "subtasks.0.output",
+        "reason": "Field required"
+      },
+      {
+        "code": "missing",
+        "path": "subtasks.1.run_if.branch",
+        "reason": "Field required"
+      },
+      {
+        "code": "extra_forbidden",
+        "path": "subtasks.1.run_if.quote",
+        "reason": "Extra inputs are not permitted"
+      },
+      {
+        "code": "missing",
+        "path": "subtasks.1.output",
+        "reason": "Field required"
+      },
+      {
+        "code": "missing",
+        "path": "subtasks.2.run_if.branch",
+        "reason": "Field required"
+      },
+      {
+        "code": "extra_forbidden",
+        "path": "subtasks.2.run_if.quote",
+        "reason": "Extra inputs are not permitted"
+      },
+      {
+        "code": "missing",
+        "path": "subtasks.2.output",
+        "reason": "Field required"
+      }
+    ],
+    "old_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 3,
+      "nodes_correct": 0,
+      "ambiguous": 0,
+      "contract_ok": false,
+      "contract_reason": "unverified_condition_quote",
+      "exact": false,
+      "edges_expected": 2,
+      "edges_predicted": 2,
+      "edges_correct": 0,
+      "conditions_expected": 2,
+      "conditions_predicted": 2,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    },
+    "normalized_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 3,
+      "nodes_correct": 0,
+      "ambiguous": 0,
+      "contract_ok": false,
+      "contract_reason": "unverified_condition_quote",
+      "exact": false,
+      "edges_expected": 2,
+      "edges_predicted": 2,
+      "edges_correct": 0,
+      "conditions_expected": 2,
+      "conditions_predicted": 2,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    }
+  },
+  {
+    "key": "H06",
+    "first": "structure_error",
+    "errors": [
+      {
+        "code": "missing",
+        "path": "subtasks.0.output",
+        "reason": "Field required"
+      },
+      {
+        "code": "missing",
+        "path": "subtasks.1.run_if.branch",
+        "reason": "Field required"
+      },
+      {
+        "code": "extra_forbidden",
+        "path": "subtasks.1.run_if.quote",
+        "reason": "Extra inputs are not permitted"
+      },
+      {
+        "code": "missing",
+        "path": "subtasks.1.output",
+        "reason": "Field required"
+      },
+      {
+        "code": "missing",
+        "path": "subtasks.2.run_if.branch",
+        "reason": "Field required"
+      },
+      {
+        "code": "extra_forbidden",
+        "path": "subtasks.2.run_if.quote",
+        "reason": "Extra inputs are not permitted"
+      },
+      {
+        "code": "missing",
+        "path": "subtasks.2.output",
+        "reason": "Field required"
+      }
+    ],
+    "old_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 3,
+      "nodes_correct": 0,
+      "ambiguous": 0,
+      "contract_ok": false,
+      "contract_reason": "unverified_condition_quote",
+      "exact": false,
+      "edges_expected": 2,
+      "edges_predicted": 2,
+      "edges_correct": 0,
+      "conditions_expected": 2,
+      "conditions_predicted": 2,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    },
+    "normalized_score": {
+      "nodes_expected": 3,
+      "nodes_predicted": 3,
+      "nodes_correct": 0,
+      "ambiguous": 0,
+      "contract_ok": false,
+      "contract_reason": "unverified_condition_quote",
+      "exact": false,
+      "edges_expected": 2,
+      "edges_predicted": 2,
+      "edges_correct": 0,
+      "conditions_expected": 2,
+      "conditions_predicted": 2,
+      "conditions_correct": 0,
+      "allowed_extra_edges": 0
+    }
+  }
+]

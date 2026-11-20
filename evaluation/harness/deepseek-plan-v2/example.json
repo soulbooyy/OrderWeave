@@ -1,0 +1,43 @@
+{
+  "intent": "order_status",
+  "confidence": 0.95,
+  "reasoning": "查询订单商品件数，并根据件数条件查询不同变体的属性。",
+  "subtasks": [
+    {
+      "id": "a",
+      "quote": "查订单 #W6885344 里的商品件数",
+      "depends_on": [],
+      "target": "#W6885344",
+      "kind": "order_lookup",
+      "output": "purchased_item_count"
+    },
+    {
+      "id": "b",
+      "quote": "查变体 3254583681 的颜色",
+      "depends_on": [
+        "a"
+      ],
+      "target": "3254583681",
+      "run_if": {
+        "source": "a",
+        "branch": "then"
+      },
+      "kind": "product_info",
+      "output": "color"
+    },
+    {
+      "id": "c",
+      "quote": "查变体 7907773809 的尺寸",
+      "depends_on": [
+        "a"
+      ],
+      "target": "7907773809",
+      "run_if": {
+        "source": "a",
+        "branch": "else"
+      },
+      "kind": "product_info",
+      "output": "size"
+    }
+  ]
+}
