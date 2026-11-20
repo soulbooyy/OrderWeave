@@ -35,6 +35,7 @@ from agents.retail_support import (
 from agents.retail_tools import RETAIL_READ_ONLY_TOOLS, retail_tool_scope, retail_tools
 from agents.retail_hooks import single_agent_hooks
 from agents.retail_response_guard import constrain_response, return_lookup_basis
+from core.task_context import ConversationContextBuilder, DEFAULT_RECENT_TURNS, identifiers
 from mcp_tools.retail_store import RetailStore, SupportStateError
 from monitor import live_events
 
@@ -338,7 +339,8 @@ class RetailService:
         fact_client: Any = None,
         publish_revision: bool = False,
         plan_client: Any = None,
-        task_context_enabled: bool = False,
+        conversation_context_enabled: bool = False,
+        recent_conversation_turns: int = DEFAULT_RECENT_TURNS,
     ):
         self.store = store
         # 为空时不维护请求清单（消融对照）。
@@ -350,7 +352,10 @@ class RetailService:
         self.skill_library = skill_library
         # 为空时沿用两轮可见窗口（消融对照）；否则由完整消息日志编排上下文。
         self.context_engine = context_engine
-        self.task_context_enabled = task_context_enabled
+        self.conversation_context_enabled = conversation_context_enabled
+        if recent_conversation_turns not in (3, 4, 5):
+            raise ValueError("recent_conversation_turns must be 3, 4 or 5")
+        self.recent_conversation_turns = recent_conversation_turns
         self.agent = agent
         # 为空时不调用分类器，执行时由业务库按规则判断确认。
         self.confirmation_client = confirmation_client
@@ -659,11 +664,18 @@ class RetailService:
             request.retail_plan = open_goals(plan)
         task_history = None
         guard_order_ids = None
-        if (engine is not None and self.task_context_enabled
+        if (engine is not None and self.conversation_context_enabled
                 and getattr(getattr(self.agent, "orchestrator", None), "routing_mode", None) == "dag"):
             task_history = [row for row in self.store.conversation_log(client_user_id, conv_id)
                             if row["turn"] < turn]
-            guard_order_ids = self._user_order_ids(client_user_id, conv_id, message, rows=task_history)
+            cstate = self.store.context_state(client_user_id, conv_id)
+            conversation = ConversationContextBuilder(
+                self.store, client_user_id, conv_id, turn, bound_user_id, task_history, cstate,
+                self.recent_conversation_turns, displayed=any(p.get("status") == "displayed" for p in pending_before))
+            request.conversation_context = conversation
+            guard_order_ids = identifiers("order", message)
+            for entry in conversation.completed:
+                guard_order_ids.update(identifiers("order", entry["user"]))
         if self.publish_revision:
             def publish_check(text, traces):
                 pending_now = self.store.active_pending(client_user_id, conv_id)
@@ -686,13 +698,8 @@ class RetailService:
             if task_history is None:
                 compaction = await engine.prepare(client_user_id, conv_id, turn)
             else:
-                from core.task_context import TaskContextCompiler
-
-                cstate = self.store.context_state(client_user_id, conv_id)
-                compaction = await engine.prepare(client_user_id, conv_id, turn, rows=task_history, cstate=cstate)
-                request.task_compiler = TaskContextCompiler(
-                    self.store, client_user_id, conv_id, turn, bound_user_id, message,
-                    task_history, cstate, engine.keep_recent_turns)
+                compaction = await engine.prepare(client_user_id, conv_id, turn, conversation=conversation,
+                                                  cstate=cstate)
 
             state: Dict[str, Any] = {"turn": turn, "bound_user_id": bound_user_id,
                                      "pending_confirmation": pending_brief, "task": request.retail_task,
@@ -725,6 +732,9 @@ class RetailService:
                               (role == request.retail_primary and request.dispatch_role in (None, role))):
                     # 主执行角色看到的附加块随本轮用户消息写入日志，使其下一轮前缀与本轮一致。
                     turn_extra[:] = extra
+                if request.conversation_context:
+                    # A fallback without a scoped DAG assignment cannot inherit another role's history.
+                    return [{"role": "user", "content": [user_content[1], *extra]}]
                 return engine.view(client_user_id, conv_id, user_content, tools.keys(), extra=extra)
 
             request.context_view = view
@@ -742,6 +752,7 @@ class RetailService:
             "analysis": analysis,
             "request": request,
             "user_content": user_content,
+            "snapshot": state if engine is not None else None,
             "guard_order_ids": guard_order_ids,
             "turn_extra": turn_extra if engine is not None else [],
             "compaction": {**compaction, **({"facts_update": facts_update} if facts_update else {}),
@@ -962,6 +973,15 @@ class RetailService:
         if self.context_engine is not None and context.get("user_content"):
             # 模型看到的是守卫后的最终回复，与用户实际看到的一致。
             self.context_engine.calibrate(client_user_id, conv_id, request.spans or [])
+            conversation = request.conversation_context
+            if conversation:
+                context["snapshot"]["final_bound_user_id"] = current_bound_user
+            if (conversation and conversation.audience and conversation.bound == current_bound_user
+                    and not guarded.record.get("terminal") and not guarded.record.get("display_failed")
+                    and not appended and not guarded.record.get("plan_reminder")):
+                context["snapshot"]["dialogue_audience"] = conversation.audience
+            if conversation:
+                context["user_content"] = self.context_engine.user_blocks(turn, context["snapshot"], message)
             self.store.save_turn_messages(client_user_id, conv_id, turn, self.context_engine.log_rows(
                 context["user_content"] + list(context.get("turn_extra") or []), request.transcript or [], text))
         latency_ms = (time.monotonic() - t0) * 1000

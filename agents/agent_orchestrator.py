@@ -211,7 +211,7 @@ class Request:
     dag_confirmation_basis: Optional[tuple[str, str]] = None
     dag_tool_limit: Optional[frozenset[str]] = None
     catalog_steps: dict = field(default_factory=dict)
-    task_compiler: Optional[Any] = None
+    conversation_context: Optional[Any] = None
 
 
 @dataclass
@@ -1176,20 +1176,21 @@ class AgentOrchestrator:
                                  and not (schedule and self.routing_mode == "dag") else None)
                 if intent_result is None:
                     recognition_history = req.history
-                    if retail_mode and getattr(self, "_retail_semantic_router", None) is not None and language == "zh":
+                    if (not req.conversation_context and retail_mode and language == "zh"
+                            and getattr(self, "_retail_semantic_router", None) is not None):
                         # 状态标明服务端来源并进入原识别缓存键，不能冒作用户确认。
                         recognition_history = list((req.history or [])[-2:]) + [{
                             "role": "system",
                             "content": "服务端调度语境，仅供意图消歧，不提供身份或交易授权：" +
                                        json.dumps(req.retail_task, ensure_ascii=False, sort_keys=True),
                         }]
-                    if req.catalog_steps and getattr(self, "routing_mode", "keyword") == "dag":
+                    if not req.conversation_context and req.catalog_steps and getattr(self, "routing_mode", "keyword") == "dag":
                         recognition_history = [*(recognition_history or []), {"role": "system", "content":
                             "Previous verified order lookup and deferred catalog requests: " + json.dumps(req.catalog_steps, ensure_ascii=False)
                             + ". Use this only for context. Quote actions from the current message."}]
                     intent_result = await self._intent_recognizer.recognize(
-                        req.message, history=recognition_history,
-                        **({"task_compiler": req.task_compiler} if req.task_compiler else {}),
+                        req.message, history=None if req.conversation_context else recognition_history,
+                        **({"conversation_context": req.conversation_context} if req.conversation_context else {}),
                     )
                 if retail_mode and self.routing_mode == "dag":
                     diagnostics = getattr(intent_result, "diagnostics", {})

@@ -321,7 +321,7 @@ class RetailWorkflow:
                    (bool(call.get("role_error")) and bool(guard.get("state_op_entered") or guard.get("unknown_result"))))
         extra = {}
         dag = call.get("dag")
-        dag_wait = dag.state.stop if dag and dag.state.stop in {"choose_target", "identity_required", "specify_change"} else ""
+        dag_wait = dag.state.stop if dag and dag.state.stop in {"choose_target", "identity_required"} else ""
         if state.get("handoff"):
             old = state["handoff"]
             extra["handoff"] = build_role_handoff(self.service.store, call["context"]["request"],

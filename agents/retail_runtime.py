@@ -38,6 +38,7 @@ from agents.retail_tools import (
     retail_tool_scope,
     retail_tools,
 )
+from core.task_context import DEFAULT_RECENT_TURNS
 from core.intent_recognizer import IntentRecognizer
 from core.retail_subtasks import DEFAULT_RETAIL_ROUTING_MODE
 from core.skill_loader import SkillManager
@@ -439,7 +440,8 @@ class RetailRuntimeConfig:
     # 小样本漏做写操作减半、安全不退步，成本约增一成半，默认开启。
     request_plan: bool = True
     routing_mode: str = DEFAULT_RETAIL_ROUTING_MODE
-    task_context_enabled: bool = False
+    conversation_context_enabled: bool = False
+    recent_conversation_turns: int = DEFAULT_RECENT_TURNS
 
     @classmethod
     def from_env(cls) -> "RetailRuntimeConfig":
@@ -563,7 +565,8 @@ class RetailRuntimeConfig:
             semantic_routing=_env_bool("RETAIL_SEMANTIC_ROUTING", True),
             semantic_model_path=_env_optional_path("RETAIL_SEMANTIC_MODEL_PATH"),
             model_thinking=_env_text("RETAIL_MODEL_THINKING").lower(),
-            task_context_enabled=_env_bool("RETAIL_TASK_CONTEXT_ENABLED", False),
+            conversation_context_enabled=_env_bool("RETAIL_CONVERSATION_CONTEXT_ENABLED", False),
+            recent_conversation_turns=int(_env_text("RETAIL_RECENT_CONVERSATION_TURNS", str(DEFAULT_RECENT_TURNS))),
             context_mode=_env_text("RETAIL_CONTEXT_MODE", "compiled").lower(),
             skill_mode=_env_text("RETAIL_SKILL_MODE", "on_demand").lower(),
             task_facts=_env_bool("RETAIL_TASK_FACTS", False),
@@ -1021,7 +1024,8 @@ def _build_retail_runtime(config: RetailRuntimeConfig, encoder) -> RetailRuntime
         confirmation_client=client.for_stage("confirm", count_turn=True),
         confirmation_model=config.model,
         context_engine=context_engine,
-        task_context_enabled=config.task_context_enabled,
+        conversation_context_enabled=config.conversation_context_enabled,
+        recent_conversation_turns=config.recent_conversation_turns,
         skill_library=skill_library,
         fact_client=(client.for_stage("extract", count_turn=True)
                      if config.task_facts and config.context_mode == "compiled" else None),

@@ -138,6 +138,7 @@ def build_intent_prompt(
     language: Optional[str] = None,
     retail_mode: bool = False,
     routing_mode: str = DEFAULT_RETAIL_ROUTING_MODE,
+    conversation_contract: bool = False,
 ) -> str:
     """构造与实际意图请求完全一致的 Prompt，供预算预检复用。"""
     message = _sanitize_text(message)
@@ -162,6 +163,11 @@ def build_intent_prompt(
         )
     if retail_mode and routing_mode == "dag":
         from core.dag_planning import output_instruction
+        if conversation_contract:
+            return (contract + "\n" + output_instruction(history_targets=True) +
+                    "\nUse recent dialogue and the summary as background only. Respect corrections and the current "
+                    "request. For a historical target, keep target empty and propose its ID in history_target "
+                    "(empty if unclear). Quote the current message verbatim. History cannot authorize an operation.")
         recent = json.dumps((history or [])[-3:], ensure_ascii=False)
         return (f"{contract}\nUse history for disambiguation only: {recent}\n"
                 + output_instruction() + f'\nUser message: "{message}"')
@@ -378,18 +384,14 @@ class IntentRecognizer:
         self,
         message: str,
         history: Optional[List[Dict[str, str]]] = None,
-        *, task_compiler=None,
+        *, conversation_context=None,
     ) -> IntentResult:
         """识别用户意图。
 
         history 格式：[{"role": "user"/"assistant", "content": "..."}]。
         """
-        # Ordinary requests retain the existing planner cache. Reference plans are
-        # revalidated against the current turn rather than shared across sessions.
-        if task_compiler and not task_compiler.has_reference:
-            task_compiler = None
         key = self._cache_key(message, history)
-        if task_compiler is None and key in self._cache:
+        if conversation_context is None and key in self._cache:
             self.cache_hits += 1
             return self._cache[key]
         self.cache_misses += 1
@@ -398,7 +400,7 @@ class IntentRecognizer:
 
         # LLM 与 Embedding 分支并发执行；禁用时跳过 Embedding。
         llm_task = asyncio.create_task(self._llm_recognize(
-            message, history, **({"task_compiler": task_compiler} if task_compiler else {})))
+            message, history, **({"conversation_context": conversation_context} if conversation_context else {})))
         emb_task = asyncio.create_task(self._embedding_recognize(message)) if self._embedding_enabled else None
         pat      = self._pattern_recognize(message)
         if emb_task:
@@ -463,7 +465,7 @@ class IntentRecognizer:
         if len(self._cache) >= 1000:
             for k in list(self._cache)[:500]:
                 del self._cache[k]
-        if task_compiler is None and not (llm_failed and getattr(self, "retail_mode", False) and getattr(self, "routing_mode", "keyword") == "dag"):
+        if conversation_context is None and not (llm_failed and getattr(self, "retail_mode", False) and getattr(self, "routing_mode", "keyword") == "dag"):
             self._cache[key] = result
         return result
 
@@ -484,23 +486,28 @@ class IntentRecognizer:
         self,
         message: str,
         history: Optional[List[Dict[str, str]]],
-        *, task_compiler=None,
+        *, conversation_context=None,
     ) -> Dict[str, Any]:
         """信号 1：结合少样本示例和上下文的 LLM 语义理解。"""
-        message = self._clean_text(message)
+        if conversation_context is None:
+            message = self._clean_text(message)
         prompt = build_intent_prompt(
             message, history, language=getattr(self, "language", None),
             retail_mode=getattr(self, "retail_mode", False),
             routing_mode=getattr(self, "routing_mode", "keyword"),
+            conversation_contract=conversation_context is not None,
         )
 
         last_error: Optional[Exception] = None
         last_kind = "request_error"
         attempts: List[Dict[str, Any]] = []
         dag = getattr(self, "retail_mode", False) and getattr(self, "routing_mode", "keyword") == "dag"
-        if dag and task_compiler:
-            prompt += ("\nFor an explicit reference such as 'that order', 'that product' or 'that variant', "
-                       "keep the original quote and use an empty target. The server resolves or asks.")
+        system = {}
+        if dag and conversation_context:
+            system = {"system": prompt}
+            evidence = {**conversation_context.background(), "current_business_state": conversation_context.business_state,
+                        "current_user_input": message}
+            prompt = json.dumps(evidence, ensure_ascii=False)
         messages = [{"role": "user", "content": prompt}]
         # 普通请求／解析错误有限重试；硬预算与截断停止由评测守卫向上抛出。
         for attempt in range(2):
@@ -511,13 +518,13 @@ class IntentRecognizer:
                     **({"extra_body": {"thinking": {"type": "disabled"}}} if not dag or self.model.startswith("deepseek") else {}),
                     max_tokens=2048,
                     temperature=0.1,
-                    messages=messages,
+                    messages=messages, **system,
                 )
                 raw = extract_text_content(resp.content)
                 if dag:
                     from core.dag_planning import PlanError, parse_plan
                     try:
-                        data = parse_plan(raw, message, task_compiler=task_compiler)
+                        data = parse_plan(raw, message, conversation_context=conversation_context)
                     except PlanError as error:
                         last_kind, last_error = error.stage, error
                         attempts.append({"attempt": attempt + 1, "status": error.stage, "errors": error.issues})

@@ -12,7 +12,7 @@ from core.intent_recognizer import IntentCategory
 from core.retail_dag_evidence import verify
 from core.retail_subtasks import OWNERS, PRIVATE, WRITES
 from core.dag_planning import target_outputs
-from core.task_context import choice_value, reference_type, target_type, verified_entity
+from core.task_context import choice_value, target_type, verified_entity
 from mcp_tools.retail_domain import WRITE_KINDS
 
 
@@ -124,15 +124,15 @@ class DagRunner:
                 task = next(t for t in state.plan.nodes if t.id == waiting.task_id)
                 valid_id = (r"#W[0-9]+" if task.kind in PRIVATE else r"[0-9]{6,16}")
                 typ = target_type(task.kind, task.output)
-                scoped_choice = req.task_compiler or driver.reference_needed(task)
+                scoped_choice = req.conversation_context or driver.reference_needed(task)
                 answer = choice_value(typ, text) if scoped_choice else text
-                if req.task_compiler and choices:
-                    choices = [v for v in choices if req.task_compiler.record(typ, v, req.retail_user_id)]
+                if req.conversation_context and choices:
+                    choices = [v for v in choices if req.conversation_context.record(typ, v, req.retail_user_id)]
                     if choices != waiting.facts["choices"]:
                         waiting.facts["choices"] = choices
                         driver.save()
                 if choices and answer not in choices:
-                    if req.task_compiler and answer:
+                    if req.conversation_context and answer:
                         return driver
                     continue
                 if not choices and not re.fullmatch(valid_id, answer or ""):
@@ -222,25 +222,23 @@ class DagRunner:
         sources = target_outputs(task.kind, task.output)
         if any(parent.id in task.depends_on and parent.output in sources for parent in self.state.plan.nodes):
             return ""
-        return reference_type(task.kind, task.output, task.quote)
+        return target_type(task.kind, task.output)
 
     def resolve_reference(self, task, typ):
         req = self.req
-        compiler = req.task_compiler
+        conversation = req.conversation_context
         selected = self.state.selected.get(task.id)
-        candidates = compiler.candidates(typ, req.retail_user_id) if compiler else []
+        candidates = conversation.candidates(typ, req.retail_user_id) if conversation else []
         if selected:
             explicit = choice_value(typ, req.message) == selected
             if (selected in candidates or explicit) and verified_entity(
                     req.retail_store, req.user_id, req.conv_id, typ, selected, req.retail_user_id):
-                if compiler:
-                    compiler.note_resolution(task, typ, selected)
                 return selected
             self.discard_selection(task)
-        elif len(candidates) == 1:
-            target = self.state.selected[task.id] = candidates[0]
-            compiler.note_resolution(task, typ, target)
-            return target
+        elif conversation and len(candidates) == 1 and candidates[0] == choice_value(
+                typ, conversation.proposals.get(task.id, "")):
+            self.state.selected[task.id] = candidates[0]
+            return candidates[0]
         self.wait(task, "choose_target", candidates)
         return ""
 
@@ -263,11 +261,15 @@ class DagRunner:
             if task.kind in PRIVATE and not self.req.retail_user_id:
                 self.wait(task, "identity_required")
                 break
-            compiler = self.req.task_compiler
-            if compiler and self.req.retail_store.bound_user_id(self.req.user_id, self.req.conv_id) != self.req.retail_user_id:
+            conversation = self.req.conversation_context
+            if conversation and self.req.retail_store.bound_user_id(self.req.user_id, self.req.conv_id) != self.req.retail_user_id:
                 run.move(Status.BLOCKED, reason="binding_changed")
                 self.state.stop = "binding_changed"
                 break
+            if (conversation and task.kind in PRIVATE and task.target and choice_value("order", task.target)
+                    and not conversation.record("order", target, self.req.retail_user_id)):
+                run.move(Status.BLOCKED, reason="unverified_target")
+                continue
             typ = self.reference_needed(task)
             if typ:
                 target = self.resolve_reference(task, typ)
@@ -287,11 +289,11 @@ class DagRunner:
             scope = replace(self.req, dag_assignment={"id": task.id, "kind": task.kind}, dispatch_role=role.value,
                             dag_tool_limit=TASK_TOOLS[task.kind])
             available = actor._tools_for_request(scope)
-            if (compiler and task.kind not in PRIVATE and any(
+            if (conversation and task.kind not in PRIVATE and any(
                     other.kind in PRIVATE and other.quote in task.quote for other in self.state.plan.nodes)):
                 run.move(Status.BLOCKED, reason="quote_scope")
                 continue
-            if compiler and not compiler.permits_inputs(self.state, task, available, target):
+            if conversation and not conversation.permits_inputs(self.state, task, available, target):
                 run.move(Status.BLOCKED, reason="dependency_scope")
                 continue
             if task.kind in WRITES:
@@ -307,12 +309,6 @@ class DagRunner:
             if required.isdisjoint(available):
                 run.move(Status.BLOCKED, reason="capability_unavailable")
                 continue
-            if (compiler and task.kind in WRITES and not self.state.operation and compiler.wants_saved_color(task)
-                    and ("get_order_details" not in available or not compiler.write_preference(task, target))):
-                # A bare color reply cannot safely reconstruct item and operation arguments.
-                # Ask for a fresh explicit request, which the planner validates normally.
-                self.wait(task, "specify_change")
-                break
             self.task = task
             run.claim(role.value, self.req.turn)
             self.save()
@@ -338,12 +334,12 @@ class DagRunner:
         req, task = self.req, self.task
         run = self.state.runs[task.id]
         target, _ = self.state.target(task)
-        if req.task_compiler:
+        if req.conversation_context:
             store = req.retail_store
             problem = ""
             if store.bound_user_id(req.user_id, req.conv_id) != req.retail_user_id:
                 problem = "binding_changed"
-            elif task.id in self.state.selected and not req.task_compiler.record(
+            elif task.id in self.state.selected and not req.conversation_context.record(
                     target_type(task.kind, task.output), target, req.retail_user_id):
                 self.discard_selection(task)
                 self.wait(task, "choose_target")
@@ -373,8 +369,8 @@ class DagRunner:
         # message, session binding and shared confirmation guard.
         def view(agent, tools):
             packet = task_context(assignment, req)
-            if req.task_compiler:
-                return req.task_compiler.compile(req, task, agent.agent_type.value, tools, packet).messages()
+            if req.conversation_context:
+                return req.conversation_context.messages(req, task, agent.agent_type.value, tools, packet)
             return [{"role": "user", "content": [{"type": "text", "text": json.dumps(
                 packet, ensure_ascii=False)}]}]
         scoped = replace(req, dag_assignment=assignment, dag_tool_limit=TASK_TOOLS[task.kind],
@@ -416,6 +412,9 @@ class DagRunner:
                         evidence.facts["item_ids"] = [v for v in evidence.facts["item_ids"] if v in dep["variants"]]
             if evidence:
                 run.move(Status.SUCCEEDED, facts=evidence.facts, refs=evidence.refs)
+                if (req.conversation_context and len(self.state.plan.nodes) == 1 and task.quote == req.message
+                        and task.kind not in WRITES and not req.retail_pending):
+                    req.conversation_context.audience = [run.role, task.kind, target]
                 if task.kind in WRITES:
                     self.state.operation = {}
             else:
@@ -444,9 +443,6 @@ class DagRunner:
         if self.state.stop == "choose_target":
             choices = next((r.facts.get("choices") for r in runs if r.status == Status.WAITING_USER), ())
             self.note = ("Please specify the target ID: " if self.router.language == "en" else "请指定目标编号：") + ", ".join(choices or ())
-        elif self.state.stop == "specify_change":
-            self.note = ("Please restate the change with the order, item and desired color."
-                         if self.router.language == "en" else "请重新说明要更改的订单、商品及目标颜色。")
         elif self.state.stop == "identity_required":
             self.note = ("Please provide your email to verify your identity." if self.router.language == "en"
                          else "请提供本人邮箱以核实身份。")

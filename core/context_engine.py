@@ -144,29 +144,43 @@ class ContextEngine:
         ratio = float(cstate.get("chars_per_token") or DEFAULT_CHARS_PER_TOKEN)
         return int(_chars(messages) / max(ratio, 0.5))
 
-    async def prepare(self, client: str, conv: str, turn: int, *, rows=None, cstate=None) -> Dict[str, Any]:
+    async def prepare(self, client: str, conv: str, turn: int, *, rows=None, cstate=None, conversation=None) -> Dict[str, Any]:
         """本轮开始前检查历史预算；超出时持久化压缩。返回压缩记录（无压缩为空）。"""
+        if conversation is not None:
+            rows = [{"turn": entry["turn"], "kind": role, "role": role,
+                     "content": [{"type": "text", "text": entry[role]}]}
+                    for entry in conversation.completed for role in ("user", "assistant")]
         if rows is None:
             rows = self.store.conversation_log(client, conv)
         if cstate is None:
             cstate = self.store.context_state(client, conv)
+        # A legacy summary may incorporate internal tool results or an earlier identity.
+        # Keep it on disk until a replacement is available, but exclude it from assembly and compaction.
+        previous = cstate.get("summary") or {}
+        if conversation is not None and not conversation.background().get("history_summary"):
+            previous = {}
+        render_state = {**cstate, "summary": previous}
         everything = {"*"}
-        tokens = self.estimate_tokens(self._render(rows, cstate, everything), cstate)
+        tokens = self.estimate_tokens(self._render(rows, render_state, everything), cstate)
         if tokens <= self.budget_tokens:
             return {}
         cutoff = turn - 1 - self.keep_recent_turns
+        if conversation is not None:
+            cutoff = conversation.recent[0]["turn"] - 1 if conversation.recent else 0
+            if not any(t["turn"] <= cutoff for t in conversation.completed):
+                return {}
         if cutoff <= 0:
             return {}
         record: Dict[str, Any] = {"turn": turn, "tokens_before": tokens}
         if int(cstate.get("elided_upto_turn") or 0) < cutoff:
             cstate["elided_upto_turn"] = cutoff
-            tokens = self.estimate_tokens(self._render(rows, cstate, everything), cstate)
+            render_state["elided_upto_turn"] = cutoff
+            tokens = self.estimate_tokens(self._render(rows, render_state, everything), cstate)
             record["elided_upto_turn"] = cutoff
-        summary_upto = int((cstate.get("summary") or {}).get("upto_turn") or 0)
+        summary_upto = int(previous.get("upto_turn") or 0)
         if tokens > self.budget_tokens and self.summarizer is not None and summary_upto < cutoff:
             older = [r for r in rows if r["turn"] <= cutoff]
-            previous = (cstate.get("summary") or {}).get("text", "")
-            text = self._transcript_text(older, previous, summary_upto)
+            text = self._transcript_text(older, previous.get("text", ""), summary_upto)
             try:
                 summary = self.summarizer(text, cutoff)
                 if hasattr(summary, "__await__"):
@@ -177,6 +191,11 @@ class ContextEngine:
                 summary = ""
             if summary:
                 cstate["summary"] = {"upto_turn": cutoff, "text": summary}
+                if conversation is not None:
+                    scope = conversation.summary_scope(cutoff)
+                    if previous and previous["scope"].get("audience") != scope["audience"]:
+                        scope["audience"] = None
+                    cstate["summary"]["scope"] = scope
                 tokens = self.estimate_tokens(self._render(rows, cstate, everything), cstate)
                 record["summary_upto_turn"] = cutoff
         record["tokens_after"] = tokens

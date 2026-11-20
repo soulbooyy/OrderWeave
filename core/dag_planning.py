@@ -29,7 +29,7 @@ def target_outputs(kind, output):
     return {"order_id"}
 
 
-def compile_nodes(data, message, *, task_compiler=None):
+def compile_nodes(data, message, *, proposals=None):
     rows = data["subtasks"]
     if not rows:
         if CONDITION_MARKER.search(message) or data["intent"] in {"order_status", "refund"}:
@@ -69,10 +69,18 @@ def compile_nodes(data, message, *, task_compiler=None):
                               + re.escape(target) + r"(?!\d)", quote, re.I)
             if label and (row["output"] == "variants") != (label[0].lower().startswith(("product", "商品"))):
                 reject("wrong_catalog_target", path+".target", "Use the product for variants and the variant for its specification.")
+        history_target = proposals is not None and row["id"] in proposals
+        if history_target:
+            from core.task_context import identifiers, target_type
+            typ = target_type(kind, row["output"])
+            allowed = target_outputs(kind, row["output"])
+            if (not typ or target or identifiers(typ, quote)
+                    or any(producers.get(p) in allowed for p in row["depends_on"])):
+                reject("conflicting_history_target", path+".history_target", "Use one target source.")
         if not target and kind not in {"return_policy", "general_policy"}:
             allowed = target_outputs(kind, row["output"])
             has_source = any(producers.get(p) in allowed for p in row["depends_on"])
-            if not has_source and not (task_compiler and task_compiler.supports(kind, row["output"], quote)):
+            if not has_source and not history_target:
                 reject("unbound_target", path+".target", "Supply a literal target or a compatible direct predecessor.")
         guard = row.get("run_if")
         if guard is None:
@@ -124,11 +132,19 @@ def unique_keys(pairs):
     return result
 
 
-def parse_plan(raw, message, *, task_compiler=None):
+def parse_plan(raw, message, *, conversation_context=None):
     try:
         obj = json.loads(raw, object_pairs_hook=unique_keys, parse_constant=invalid_constant)
     except (ValueError, RecursionError) as exc:
         raise PlanError("json_error", [dict(code="invalid_json", path="$", reason=str(exc))]) from exc
+    proposals = {}
+    if conversation_context is not None and isinstance(obj, dict) and isinstance(obj.get("subtasks"), list):
+        for i, row in enumerate(obj["subtasks"]):
+            if isinstance(row, dict) and "history_target" in row and isinstance(row.get("id"), str):
+                value = row.pop("history_target")
+                if not isinstance(value, str) or len(value) > 128:
+                    reject("invalid_history_target", f"subtasks.{i}.history_target", "Expected an optional ID string.")
+                proposals[row["id"]] = value
     try:
         data = DagResponse.model_validate(obj).model_dump(exclude_none=True, exclude_unset=True)
     except ValidationError as exc:
@@ -140,7 +156,9 @@ def parse_plan(raw, message, *, task_compiler=None):
                 del loc[2]
             issues.append(dict(code=error["type"], path=".".join(map(str,loc)) or "$", reason=error["msg"]))
         raise PlanError("structure_error", issues) from exc
-    compile_nodes(data, message, task_compiler=task_compiler)
+    compile_nodes(data, message, proposals=proposals)
+    if conversation_context is not None:
+        conversation_context.proposals = proposals
     return data
 
 
@@ -148,7 +166,13 @@ def invalid_constant(value):
     raise ValueError("Invalid JSON number: "+value)
 
 
-def output_instruction():
+def output_instruction(*, history_targets=False):
+    schema = DagResponse.model_json_schema()
+    if history_targets:
+        for node in schema["$defs"].values():
+            if "target" in node.get("properties", {}):
+                node["properties"]["history_target"] = {"type": "string", "maxLength": 128,
+                                                        "description": "Proposed historical ID. Empty if ambiguous."}
     example = DagResponse.model_validate({
         "intent": "query", "confidence": 0.95, "reasoning": "A rating selects one of two lookups.",
         "subtasks": [
@@ -165,6 +189,6 @@ def output_instruction():
             "Quote each branch action exactly, without its predicate, separators or final punctuation. "
             "Reference the fact-producing predecessor and mark then or else. Never infer the actual branch outcome. "
             "Reporting facts to the user is not another lookup. An unsupported or social request may have an empty list.\n"
-            + json.dumps(DagResponse.model_json_schema(), ensure_ascii=False, separators=(",",":"))
+            + json.dumps(schema, ensure_ascii=False, separators=(",",":"))
             + "\nExample for: Read the ventilation of variant 10101. If the ventilation level is high, check "
               "the status of order #W42; otherwise find the payment type for order #W42.\n"+example.model_dump_json(exclude_unset=True))
