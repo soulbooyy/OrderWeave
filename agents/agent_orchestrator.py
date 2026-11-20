@@ -1290,10 +1290,10 @@ class AgentOrchestrator:
                 self._record_tool_trace(result)
                 return result
 
-        # The role queue cannot enforce a conditional edge. Never flatten one
-        # into an unconditional dispatch or silently fall back to keywords.
+        # Legacy role queues cannot enforce the versioned task contract.
         if (retail_mode and self.routing_mode == "dag" and isinstance(subtasks, list)
-                and any(isinstance(row, dict) and "run_if" in row for row in subtasks)
+                and any(isinstance(row, dict) and {"run_if", "condition", "output", "target"}.intersection(row)
+                        for row in subtasks)
                 and req.intent not in (IntentCategory.ESCALATION, IntentCategory.HUMAN_HANDOFF)):
             try:
                 Plan.build(subtasks, req.message, req.user_id, req.conv_id)
@@ -1302,9 +1302,9 @@ class AgentOrchestrator:
                 reason = str(exc)
             result = OrchestratorResult(
                 request_id=req.request_id, agent_type=AgentType.RETAIL, intent=req.intent, success=False,
-                response=("I cannot run this conditional request yet. Which step should I handle first?"
-                          if language == "en" else "当前还无法执行这个条件任务。请指定先处理哪一步。"),
-                routing_reason=f"dag_condition:{reason}", latency_ms=(time.monotonic() - t0) * 1000)
+                response=("I cannot verify this task plan yet. Which step should I handle first?"
+                          if language == "en" else "当前还无法按这个计划核实结果。请指定先处理哪一步。"),
+                routing_reason=f"dag_contract:{reason}", latency_ms=(time.monotonic() - t0) * 1000)
             self._record_tool_trace(result)
             return result
 

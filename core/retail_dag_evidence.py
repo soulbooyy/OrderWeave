@@ -48,18 +48,21 @@ def _catalog_value(field, name, args, result, target):
     return None
 
 
-def _write_evidence(task, name, args, result, events, target):
+def _write_evidence(task, name, args, result, events, target, operation):
     kind = WRITE_KINDS.get(name)
     if not kind or result.get("kind") != kind or result.get("action_status") != "executed":
         return None
     if (kind in {"return", "exchange"}) != (task.kind == "return_change"):
         return None
     op_id = result.get("op_id")
-    if not op_id:
+    if (not op_id or not operation or operation.get("op_id") != op_id
+            or operation.get("kind") != kind):
         return None
     try:
         canonical = canonical_args(kind, args)
     except DomainError:
+        return None
+    if operation.get("args") != canonical:
         return None
     if kind == "modify_user_address":
         if result.get("user_id") != target:
@@ -76,11 +79,12 @@ def _write_evidence(task, name, args, result, events, target):
     return None
 
 
-def verify(task: Node, traces, *, bound_user=None, target="", events=()):
+def verify(task: Node, traces, *, bound_user=None, target="", events=(), operation=None):
     """Caller supplies this attempt's traces/events from the same authorized conversation.
 
     A resolved prerequisite may supply an otherwise unknown target. It cannot
-    override a literal target already locked into the user's task.
+    override a literal target already locked into the user's task. For writes,
+    operation is the expected op_id, kind and canonical args from the server.
     """
     if not task.output or (target and task.target and target != task.target):
         return None
@@ -108,7 +112,7 @@ def verify(task: Node, traces, *, bound_user=None, target="", events=()):
                 if entry.get("evidence_id") == target and entry.get("content"):
                     return Evidence({"policy": entry["content"]}, (f"knowledge:{target}",))
         elif task.kind in {"return_change", "order_change"} and bound_user:
-            found = _write_evidence(task, name, args, result, events, target)
+            found = _write_evidence(task, name, args, result, events, target, operation)
             if found:
                 return found
         if value is not None:

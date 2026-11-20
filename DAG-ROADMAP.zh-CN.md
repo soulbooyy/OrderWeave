@@ -1,6 +1,6 @@
 # OrderWeave 零售 DAG 编排实施路线图
 
-本路线图配套 [重构需求 R1–R6](DAG-REQUIREMENTS.zh-CN.md)，从 `4407724` 开始。以下均为待实施步骤。第一版选择串行调度，让依赖顺序、授权和恢复行为能由离线测试逐项验证。
+本路线图配套 [重构需求 R1–R6](DAG-REQUIREMENTS.zh-CN.md)，从 `4407724` 开始。第一阶段已通过离线验收，第二、三阶段待实施。第一版选择串行调度，让依赖顺序、授权和恢复行为能由离线测试逐项验证。
 
 ## 开发方式
 
@@ -17,6 +17,13 @@
 | 1.3 建立任务级工具权限（R3） | Billing 查单尝试写退货、Technical 查规格尝试读私有订单、General 降级后尝试沿用原权限，均在真实调用前被拦截。覆盖支持模式工具更窄、合法读取成功、缺少身份仍被业务层拒绝。 | DAG 的工具展示与调用前守卫共享交集规则；切换中英文提示词的职责文本。保留服务端授权、技能和确认校验。关键词和纯子意图沿用各自基线。 |
 
 阶段出口：计划、合法状态转换、条件和权限可独立测试；每个拒绝用例同时断言业务工具未执行或服务端无状态变化。优先复用 [路由测试](tests/test_retail_dispatch.py)、[写操作测试](tests/test_retail_actions.py) 和 [确认测试](tests/test_retail_confirmation.py)。
+
+**第一阶段验收记录**
+
+- [新增契约与权限测试](tests/test_retail_dag.py) 共 34 项。运行 `.venv/bin/python -m pytest -q -rs` 得到 235 项通过、1 项 Windows 专用测试跳过。模型使用离线脚本。
+- 冻结基线为 `4407724` 的 [路由题和金标准](evaluation/harness/routing_cases.py)，种子文件 SHA-256 为 `413a65160adbdb5fde0ffc0015c49b6d70250b10c18128de169b597af7766765`。在基线与阶段一版本分别运行 `.venv/bin/python -m evaluation.harness.routing_ablation`，三种模式各 17 题，全部 51 条逐题路由记录与汇总一致。该夹具只验证旧路由兼容性。
+- 两件商品回放固定为实验覆盖 `order_lookup → billing`、Technical 查规格。第三轮的两条成功调用依次为 Billing 的 `get_order_details(#W6564160)` 和 Technical 的 `get_item_details(1665571435)`，最终规格为 `ventilation=high`。LangGraph 与 legacy 各用脚本模型和真实 SQLite 工具复核一次。
+- 当前生产路径已启用 DAG 任务工具交集。旧队列仍将多项任务交给同一角色时，只能使用这些任务共同允许的工具。显式新契约先校验再暂停，第二阶段接入 Scheduler 后才执行。条件首版接受受控的中英文订单数量比较和通风等级判等，不能解释的条件保留为未解决。
 
 ## 第二阶段　动态调度、业务边界与跨轮恢复
 

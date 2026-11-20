@@ -23,7 +23,7 @@ class Status(str, Enum):
 
 _TRANSITIONS = {
     Status.PENDING: {Status.READY, Status.BLOCKED, Status.SKIPPED},
-    Status.READY: {Status.RUNNING, Status.BLOCKED},
+    Status.READY: {Status.BLOCKED},
     Status.RUNNING: {Status.SUCCEEDED, Status.FAILED, Status.BLOCKED, Status.WAITING_USER},
     Status.BLOCKED: {Status.PENDING, Status.SKIPPED},
     Status.WAITING_USER: {Status.READY, Status.BLOCKED},
@@ -124,6 +124,8 @@ class Plan:
         nodes = {}
         for task in ordered:
             row = by_id[task.id]
+            if "condition" in row:
+                raise ValueError("use_run_if")
             output, target = row.get("output", ""), row.get("target", "")
             if not isinstance(output, str) or (output and output not in OUTPUTS[task.kind]):
                 raise ValueError("invalid_output_field")
@@ -155,6 +157,8 @@ class Run:
     refs: tuple[str, ...] = ()
 
     def move(self, status, *, reason="", refs=(), facts=None):
+        if status == Status.RUNNING:
+            raise ValueError("claim the node before executing it")
         if status not in _TRANSITIONS.get(self.status, ()):
             raise ValueError(f"invalid task transition: {self.status} -> {status}")
         if status == Status.SUCCEEDED and not refs:
@@ -163,8 +167,10 @@ class Run:
         self.refs, self.facts = tuple(refs), dict(facts or {})
 
     def claim(self, role, turn):
+        if self.status != Status.READY:
+            raise ValueError("task_not_ready")
         if self.turn >= turn:
             raise ValueError("already_attempted")
-        self.move(Status.RUNNING)
+        self.status, self.reason = Status.RUNNING, ""
         self.turn, self.role = turn, role
         self.attempt += 1

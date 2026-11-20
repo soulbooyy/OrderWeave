@@ -110,12 +110,14 @@ def test_write_requires_matching_business_event_and_canonical_arguments():
     args = {"order_id": "#W100", "item_ids": ["1"], "payment_method_id": "card"}
     call = trace("return_delivered_order_items", args, op_id="op1", kind="return", action_status="executed")
     event = dict(event_id=7, op_id="op1", event_type="return_requested", order_id="#W100", payload={"kind": "return", "args": args})
-    assert verify(task, [call], events=[event], bound_user="u").refs == ("event:7",)
+    op = dict(op_id="op1", kind="return", args=args)
+    assert verify(task, [call], events=[event], bound_user="u") is None
+    assert verify(task, [call], events=[event], bound_user="u", operation=op).refs == ("event:7",)
     for bad in ([], [dict(event, op_id="new")], [dict(event, event_type="return_prepared")],
                 [dict(event, payload={"kind": "return", "args": {**args, "item_ids": ["2"]}})]):
-        assert verify(task, [call], events=bad, bound_user="u") is None
+        assert verify(task, [call], events=bad, bound_user="u", operation=op) is None
     pending = trace("return_delivered_order_items", args, op_id="op1", kind="return", action_status="pending_confirmation")
-    assert verify(task, [pending], events=[event], bound_user="u") is None
+    assert verify(task, [pending], events=[event], bound_user="u", operation=op) is None
 
 
 def test_real_entry_point_never_discards_explicit_condition():
@@ -129,7 +131,7 @@ def test_real_entry_point_never_discards_explicit_condition():
         app = router("dag", rows)
         result = asyncio.run(app.run(Request(COUNT_QUERY, "client", "conv")))
         assert not result.success and not result.tool_traces
-        assert result.routing_reason.startswith("dag_condition:")
+        assert result.routing_reason.startswith("dag_contract:")
         assert all(agent._client.calls == 0 for pool in app._pool.values() for agent in pool)
 
 
@@ -183,11 +185,12 @@ def test_checked_state_changes_require_scoped_business_records(tmp_path):
                   bound_user=user["user_id"]) is None
     assert store.mark_pending_displayed("client", "conv", prepared["op_id"], 1, False)
     store.begin_turn("client", "conv")
+    op, = store.active_pending("client", "conv")
     receipt = store.write_action("client", "conv", tool, args, "Yes, please proceed.")
     t = trace(tool, args, **receipt)
-    evidence = verify(task, [t], events=store.list_events("client", "conv"), bound_user=user["user_id"])
+    evidence = verify(task, [t], events=store.list_events("client", "conv"), bound_user=user["user_id"], operation=op)
     assert evidence.facts["op_id"] == prepared["op_id"]
-    assert verify(task, [t], events=store.list_events("client", "other"), bound_user=user["user_id"]) is None
+    assert verify(task, [t], events=store.list_events("client", "other"), bound_user=user["user_id"], operation=op) is None
 
 
 @pytest.mark.parametrize("kind,role,assigned,tool,expected", [
@@ -326,3 +329,28 @@ def test_default_mode_and_subintent_keep_original_tool_visibility(monkeypatch):
         return AgentResponse(AgentType.BILLING, "checked", True)
     monkeypatch.setattr(agent, "handle", handle)
     asyncio.run(app.run(req))
+
+
+def test_running_state_must_be_claimed_and_write_event_must_match_expected_operation():
+    from core.retail_dag_evidence import verify
+    run = Run("p", "w")
+    run.move(Status.READY)
+    with pytest.raises(ValueError, match="claim"):
+        run.move(Status.RUNNING)
+    task = build([dict(node("w", "return_change"), quote="return from #W100", target="#W100", output="executed")]).nodes[0]
+    args = {"order_id": "#W100", "item_ids": ["1"], "payment_method_id": "card"}
+    call = trace("return_delivered_order_items", args, op_id="op1", kind="return", action_status="executed")
+    event = dict(event_id=7, op_id="op1", event_type="return_requested", order_id="#W100", payload={"kind":"return", "args":args})
+    wrong_operation = dict(op_id="op2", kind="return", args=args)
+    assert verify(task, [call], bound_user="u", events=[event], operation=wrong_operation) is None
+
+
+@pytest.mark.parametrize("metadata", [{"output": "private_data"}, {"condition": "unsafe()"}, {"output": "status"}])
+def test_extended_contract_never_falls_through_to_legacy_executor(metadata):
+    import asyncio
+    from agents.agent_orchestrator import Request
+    from tests.test_retail_dispatch import router
+    app = router("dag", [dict(node("t", "order_lookup"), **metadata)])
+    result = asyncio.run(app.run(Request("order_lookup", "u", "c")))
+    assert not result.success and not result.tool_traces
+    assert all(agent._client.calls == 0 for pool in app._pool.values() for agent in pool)
