@@ -1,0 +1,230 @@
+{
+  "0bfcb49d0d": {
+    "requested_facts": true,
+    "no_contradiction": true,
+    "selection_explained": false,
+    "basis_before_card": false,
+    "submission_acknowledged": true
+  },
+  "3029e44411": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "6a5a144ad2": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "7840a8834e": {
+    "requested_facts": false,
+    "no_contradiction": true
+  },
+  "93c8fab4f1": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "9f57436669": {
+    "requested_facts": true,
+    "no_contradiction": true,
+    "selection_explained": false,
+    "basis_before_card": false,
+    "submission_acknowledged": true
+  },
+  "a8611f47b6": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "b17cefa70c": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "b89502fccc": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "b920e23904": {
+    "requested_facts": false,
+    "no_contradiction": true,
+    "selection_explained": false,
+    "basis_before_card": false,
+    "submission_acknowledged": false
+  },
+  "eb3aa5379c": {
+    "requested_facts": false,
+    "no_contradiction": true
+  },
+  "f6576f3211": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "f98eb64f4a": {
+    "requested_facts": true,
+    "no_contradiction": false,
+    "selection_explained": true,
+    "basis_before_card": true,
+    "submission_acknowledged": true
+  },
+  "227fc24386": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "23d0acb3d4": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "2b44bb171f": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "50893f579d": {
+    "requested_facts": false,
+    "no_contradiction": false
+  },
+  "dbc5f848e0": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "de422f6d19": {
+    "requested_facts": false,
+    "no_contradiction": true
+  },
+  "0a0f116985": {
+    "requested_facts": true,
+    "no_contradiction": true,
+    "selection_explained": true
+  },
+  "23af7b1625": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "443a94a153": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "60c73a5377": {
+    "requested_facts": true,
+    "no_contradiction": true,
+    "selection_explained": false,
+    "basis_before_card": false,
+    "submission_acknowledged": true
+  },
+  "8c25d7eab8": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "9a3f23d6d6": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "9bccf5be2d": {
+    "requested_facts": true,
+    "no_contradiction": true,
+    "selection_explained": false,
+    "basis_before_card": false,
+    "submission_acknowledged": true
+  },
+  "a1bfc83c86": {
+    "requested_facts": false,
+    "no_contradiction": true,
+    "selection_explained": false,
+    "basis_before_card": false,
+    "submission_acknowledged": false
+  },
+  "a7a8dba8bf": {
+    "requested_facts": false,
+    "no_contradiction": true,
+    "selection_explained": false
+  },
+  "cbf5a25e1f": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "ce596ca0a0": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "e0df378288": {
+    "requested_facts": true,
+    "no_contradiction": true,
+    "selection_explained": true
+  },
+  "ec4bc1da03": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "ee7cdc139b": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "f7bccd004d": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "2a56411166": {
+    "requested_facts": false,
+    "no_contradiction": true,
+    "selection_explained": false,
+    "basis_before_card": false,
+    "submission_acknowledged": false
+  },
+  "2c8959e9de": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "3653ca9fd9": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "371e593a81": {
+    "requested_facts": false,
+    "no_contradiction": false
+  },
+  "5157be34d5": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "7e95115a13": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "a4bd595d3b": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "cfcaf45844": {
+    "requested_facts": false,
+    "no_contradiction": false
+  },
+  "d8280e44c7": {
+    "requested_facts": true,
+    "no_contradiction": true
+  },
+  "0536dd8836": {
+    "requested_facts": true,
+    "no_contradiction": true,
+    "selection_explained": true
+  },
+  "4b7eb9e7ed": {
+    "requested_facts": true,
+    "no_contradiction": true,
+    "selection_explained": false,
+    "basis_before_card": false,
+    "submission_acknowledged": true
+  },
+  "8172f58865": {
+    "requested_facts": true,
+    "no_contradiction": true,
+    "selection_explained": false,
+    "basis_before_card": false,
+    "submission_acknowledged": true
+  },
+  "09aa562217": {
+    "requested_facts": false,
+    "no_contradiction": true,
+    "selection_explained": false
+  },
+  "58af9b3b06": {
+    "requested_facts": true,
+    "no_contradiction": true,
+    "selection_explained": true
+  }
+}
