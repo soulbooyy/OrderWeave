@@ -288,6 +288,7 @@ For frontend development, run the backend as above and `npm run dev` in `web/` (
 | Setting | Default | Notes |
 | --- | --- | --- |
 | `RETAIL_AGENT_MODE` | `multi` | `single` runs one agent (≈30% cheaper, slightly lower success) |
+| `RETAIL_ROUTING_MODE` | `dag` | Multi-agent retail uses task dependencies. Set `keyword` for keyword routing or `subintent` for routing by subintent. |
 | `RETAIL_WORKFLOW_MODE` | `langgraph` | `legacy` is a fallback |
 | `RETAIL_CONTEXT_MODE` | `compiled` | `window` keeps the old two-turn window for comparison |
 | `RETAIL_CONTEXT_BUDGET_TOKENS` | `32000` | Above this estimate, history is compacted and persisted |

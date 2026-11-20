@@ -39,6 +39,7 @@ from agents.retail_tools import (
     retail_tools,
 )
 from core.intent_recognizer import IntentRecognizer
+from core.retail_subtasks import DEFAULT_RETAIL_ROUTING_MODE
 from core.skill_loader import SkillManager
 from evaluation.retail_ledger import (
     BudgetedClient,
@@ -85,6 +86,10 @@ def retail_mode_enabled() -> bool:
 def _env_text(name: str, default: str = "") -> str:
     raw = os.getenv(name, "")
     return raw.strip() if raw.strip() else default
+
+
+def retail_routing_mode_from_env() -> str:
+    return _env_text("RETAIL_ROUTING_MODE", DEFAULT_RETAIL_ROUTING_MODE)
 
 
 def _env_path(name: str, default: Path) -> Path:
@@ -433,7 +438,7 @@ class RetailRuntimeConfig:
     # 会话请求清单：每轮抽取用户提出的写操作请求，进度由业务事件推出（需 compiled 上下文）。
     # 小样本漏做写操作减半、安全不退步，成本约增一成半，默认开启。
     request_plan: bool = True
-    routing_mode: str = "keyword"
+    routing_mode: str = DEFAULT_RETAIL_ROUTING_MODE
 
     @classmethod
     def from_env(cls) -> "RetailRuntimeConfig":
@@ -561,7 +566,7 @@ class RetailRuntimeConfig:
             skill_mode=_env_text("RETAIL_SKILL_MODE", "on_demand").lower(),
             task_facts=_env_bool("RETAIL_TASK_FACTS", False),
             publish_revision=_env_bool("RETAIL_PUBLISH_REVISION", True),
-            routing_mode=_env_text("RETAIL_ROUTING_MODE", "keyword"),
+            routing_mode=retail_routing_mode_from_env(),
             request_plan=_env_bool("RETAIL_REQUEST_PLAN", True),
             context_budget_tokens=max(2000, int(_env_text("RETAIL_CONTEXT_BUDGET_TOKENS", "32000"))),
             enable_memory=_env_bool("RETAIL_ENABLE_MEMORY", True),

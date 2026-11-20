@@ -37,7 +37,7 @@ from agents.agent_loop import LoopError, LoopHook, MethodHook, run_tool_loop
 from core.intent_recognizer import IntentCategory, IntentRecognizer, UrgencyLevel
 from core.llm_utils import extract_text_content
 from core.retail_dag import Plan
-from core.retail_subtasks import Dispatch, MODES, plan_dispatch
+from core.retail_subtasks import DEFAULT_RETAIL_ROUTING_MODE, Dispatch, MODES, plan_dispatch
 from mcp_tools.retail_domain import WRITE_KINDS
 
 logger = logging.getLogger(__name__)
@@ -929,7 +929,7 @@ class AgentOrchestrator:
         retail_role_clients: Optional[Dict[str, Any]] = None,
         retail_support_enabled: bool = False,
         retail_semantic_router: Optional[Any] = None,
-        routing_mode: str = "keyword",
+        routing_mode: str = DEFAULT_RETAIL_ROUTING_MODE,
     ):
         if not model:
             raise ValueError("model is required")

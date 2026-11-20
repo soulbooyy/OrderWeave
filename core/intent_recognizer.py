@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional
 from anthropic import AsyncAnthropic
 
 from core.llm_utils import extract_text_content
+from core.retail_subtasks import DEFAULT_RETAIL_ROUTING_MODE
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ def build_intent_prompt(
     history: Optional[List[Dict[str, str]]] = None,
     language: Optional[str] = None,
     retail_mode: bool = False,
-    routing_mode: str = "keyword",
+    routing_mode: str = DEFAULT_RETAIL_ROUTING_MODE,
 ) -> str:
     """构造与实际意图请求完全一致的 Prompt，供预算预检复用。"""
     message = _sanitize_text(message)
@@ -361,7 +362,7 @@ class IntentRecognizer:
         self.threshold = confidence_threshold
         self.language  = language
         self.retail_mode = retail_mode
-        self.routing_mode = "keyword"
+        self.routing_mode = DEFAULT_RETAIL_ROUTING_MODE if retail_mode else "keyword"
         # 本地字符 n-gram 向量始终可用。若客户端暴露 embeddings 资源，
         # _embed_text 会优先使用它，否则退回本地向量。
         self._embedding_enabled = True

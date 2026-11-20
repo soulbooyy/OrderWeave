@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 from graphlib import CycleError, TopologicalSorter
 
 
+DEFAULT_RETAIL_ROUTING_MODE = "dag"
 MODES = ("keyword", "subintent", "dag")
 OWNERS = {
     "product_info": "technical", "general_policy": "general", "order_lookup": "general",

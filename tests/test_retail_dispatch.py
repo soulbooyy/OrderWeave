@@ -215,3 +215,37 @@ def test_return_lookup_basis_uses_verified_variant_and_matching_pending_card():
     assert "$19.95, below your $20.00" in reply and reply.index("333444") < reply.index("Pending card")
     assert reply.count("Pending card") == 1 and "Refund arrived" not in reply
     assert "$19.95" not in guard(dict(pending, order_id="#W9999"))
+
+
+@pytest.mark.parametrize("setting,expected", [(None, "dag"), ("", "dag"), ("keyword", "keyword"),
+                                              ("subintent", "subintent"), ("dag", "dag")])
+def test_application_routing_defaults_and_overrides(monkeypatch, tmp_path, setting, expected):
+    from unittest.mock import AsyncMock
+    from agents import retail_runtime
+    from api import web_console
+
+    for key, value in {"ANTHROPIC_API_KEY": "offline", "LLM_MODEL": "offline",
+                       "RETAIL_INPUT_CNY_PER_MTOK": "1", "RETAIL_OUTPUT_CNY_PER_MTOK": "1"}.items():
+        monkeypatch.setenv(key, value)
+    if setting is None:
+        monkeypatch.delenv("RETAIL_ROUTING_MODE", raising=False)
+    else:
+        monkeypatch.setenv("RETAIL_ROUTING_MODE", setting)
+    assert retail_runtime.RetailRuntimeConfig.from_env().routing_mode == expected
+
+    web_configs = []
+    def build(config):
+        web_configs.append(config)
+        return AsyncMock()
+    monkeypatch.setattr(retail_runtime, "build_retail_runtime", build)
+    monkeypatch.setattr(web_console, "asset_paths", lambda: (tmp_path/"seed", tmp_path/"policy"))
+    asyncio.run(web_console.build_session_runtime(tmp_path, "multi", "en"))
+    assert web_configs[0].routing_mode == expected
+
+
+def test_standalone_retail_router_defaults_to_dag():
+    app = AgentOrchestrator(model="offline", client=ReplayClient("OK"), retail_mode=True,
+                            retail_role_classes=ROLES)
+    assert app.routing_mode == app._intent_recognizer.routing_mode == "dag"
+    assert '"depends_on"' in build_intent_prompt("查订单", retail_mode=True)
+    assert IntentRecognizer(model="offline", client=ReplayClient("OK"), retail_mode=True).routing_mode == "dag"

@@ -77,7 +77,7 @@ uv run python -m evaluation.harness.run --run-id my-run --report-only
 
 ## 主辅角色与执行顺序的离线对照
 
-API、CLI 和 Web 控制台均支持在项目根目录的 `.env` 设置 `RETAIL_ROUTING_MODE`，重启进程生效。默认值为 `keyword`。正式任务评测对应三个独立 profile，其他参数与 `plan-multi` 相同。
+API、CLI 和 Web 控制台均支持在项目根目录的 `.env` 设置 `RETAIL_ROUTING_MODE`，重启进程生效。应用默认使用 `dag`。下表记录早期主辅路由实验，评测显式指定模式，`plan-multi` 始终使用关键词基线。当前 DAG 按就绪任务派发，真实执行结果见[三模式端到端对照](harness/e2e-v1/RESULTS.zh-CN.md)。
 
 | 模式 | 普通零售多角色路由 | 任务评测 profile |
 | --- | --- | --- |

@@ -398,7 +398,7 @@ class SessionManager:
 
 async def build_session_runtime(folder: Path, mode: str, language: str) -> Any:
     """与评测 plan profile 同款配置：compiled 上下文、按需 Skill、发布校验、请求清单。"""
-    from agents.retail_runtime import RetailRuntimeConfig, build_retail_runtime
+    from agents.retail_runtime import RetailRuntimeConfig, build_retail_runtime, retail_routing_mode_from_env
     from evaluation.harness import config as cfg
 
     model = cfg.model_settings()
@@ -419,7 +419,7 @@ async def build_session_runtime(folder: Path, mode: str, language: str) -> Any:
         semantic_routing=False, ledger_settlement_policy=model["settlement_policy"],
         model_thinking="disabled", context_mode="compiled", skill_mode="on_demand",
         task_facts=False, publish_revision=True, request_plan=True,
-        routing_mode=os.getenv("RETAIL_ROUTING_MODE", "keyword"))
+        routing_mode=retail_routing_mode_from_env())
     runtime = build_retail_runtime(config)
     await runtime.start()
     return runtime

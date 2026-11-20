@@ -320,13 +320,13 @@ def test_coalesced_permissions_cannot_borrow_another_nodes_write():
     assert not task_tool_limit([])
 
 
-def test_default_mode_and_subintent_keep_original_tool_visibility(monkeypatch):
+def test_dag_default_and_explicit_subintent_tool_visibility(monkeypatch):
     import asyncio
     from agents.agent_orchestrator import AgentResponse, AgentType, Request
     from agents.retail_runtime import RetailRuntimeConfig
     from tests.test_retail_dispatch import router
 
-    assert RetailRuntimeConfig.__dataclass_fields__["routing_mode"].default == "keyword"
+    assert RetailRuntimeConfig.__dataclass_fields__["routing_mode"].default == "dag"
     app = router("subintent", [node("t", "billing_lookup")])
     app.set_shared_tools(dict.fromkeys(("get_order_details", "return_delivered_order_items")))
     agent = app._best_agent(AgentType.BILLING)
