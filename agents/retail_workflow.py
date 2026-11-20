@@ -362,11 +362,26 @@ class RetailWorkflow:
                 runner = DagRunner(self.service.agent.orchestrator, req, execution)
                 runner.reconcile()
                 outcome = runner.finish()
-                call["result"] = RetailTurnResult(response=outcome.response, success=outcome.success,
+                # Recovery may verify an existing event, but cannot prepare, redisplay an
+                # unacknowledged card, or submit an operation.
+                from agents.retail_response_guard import constrain_response
+                history = store.list_events(req.user_id, req.conv_id)
+                refs = {ref for run in execution.runs.values() for ref in run.refs}
+                receipts = [e for e in history if f"event:{e['event_id']}" in refs]
+                displayed = [p for p in store.active_pending(req.user_id, req.conv_id) if p["status"] == "displayed"]
+                checked = constrain_response(
+                    outcome.response, traces=self.service._order_evidence(req.user_id, req.conv_id, outcome.response,
+                                                                          bound, displayed),
+                    events=[], session_events=receipts, pending_before=displayed, pending_after=displayed,
+                    turn=req.turn, bound_user_id=bound, language=self.service.language, dag_post_write=req.dag_post_write,
+                )
+                call["result"] = RetailTurnResult(response=checked.text,
+                    success=bool(outcome.success and not checked.record.get("recovery_signature")),
+                    response_guard=checked.record,
                     agent_type=AgentType.RETAIL, request_id=req.request_id, turn=req.turn, latency_ms=0,
                     semantic_routing=req.retail_routing, orchestration_mode="dag")
                 return self._step(state, "recover_result", phase="reconciled", plan_id=execution.plan.id,
-                                  waiting_reason="", result={"success": outcome.success})
+                                  waiting_reason="", result={"success": call["result"].success})
         # 非等待点崩溃可能已完成写入：只读权威事件，不重跑 Agent 或工具。
         events = self.service.store.list_events(call["user"], call["conv"])
         known = [e for e in events if e["event_type"] == "return_requested"]

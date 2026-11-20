@@ -234,6 +234,8 @@ def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow,reply):
                 asyncio.run(turn("Yes, please proceed."))
         assert store.open_dags("u","c")[0].runs["ret"].status == Status.RUNNING
         recovered = asyncio.run(turn("continue"))
+        if workflow == "langgraph" and recovered.workflow.get("recovered"):
+            assert recovered.response_guard.get("version")
         if not recovered.success:
             recovered = asyncio.run(turn("continue"))
         assert recovered.success and [key for _,key in calls] == ["ret","ret","read"]
