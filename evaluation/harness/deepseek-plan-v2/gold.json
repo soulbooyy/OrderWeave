@@ -1,0 +1,225 @@
+{
+  "P01": [
+    {
+      "id": "read",
+      "kind": "order_lookup",
+      "quote": "Count all the items on receipt #W8750911",
+      "target": "#W8750911",
+      "output": "purchased_item_count",
+      "depends_on": []
+    },
+    {
+      "id": "clock",
+      "kind": "product_info",
+      "quote": "check the color of wall clock variant 9850781806",
+      "target": "9850781806",
+      "output": "color",
+      "depends_on": [
+        "read"
+      ],
+      "run_if": {
+        "source": "read",
+        "quote": "If the order contains at most two items, check the color of wall clock variant 9850781806; otherwise find the size of backpack variant 5917587651"
+      }
+    },
+    {
+      "id": "pack",
+      "kind": "product_info",
+      "quote": "find the size of backpack variant 5917587651",
+      "target": "5917587651",
+      "output": "size",
+      "depends_on": [
+        "read"
+      ],
+      "run_if": {
+        "source": "read",
+        "quote": "If the order contains at most two items, check the color of wall clock variant 9850781806; otherwise find the size of backpack variant 5917587651"
+      }
+    }
+  ],
+  "P02": [
+    {
+      "id": "count",
+      "kind": "order_lookup",
+      "quote": "请查订单 #W6885344 里的商品件数",
+      "target": "#W6885344",
+      "output": "purchased_item_count",
+      "depends_on": []
+    },
+    {
+      "id": "a",
+      "kind": "product_info",
+      "quote": "查变体 3254583681 的颜色",
+      "target": "3254583681",
+      "output": "color",
+      "depends_on": [
+        "count"
+      ],
+      "run_if": {
+        "source": "count",
+        "quote": "如果订单少于 2 件商品，就查变体 3254583681 的颜色，否则查变体 7907773809 的尺寸"
+      }
+    },
+    {
+      "id": "b",
+      "kind": "product_info",
+      "quote": "查变体 7907773809 的尺寸",
+      "target": "7907773809",
+      "output": "size",
+      "depends_on": [
+        "count"
+      ],
+      "run_if": {
+        "source": "count",
+        "quote": "如果订单少于 2 件商品，就查变体 3254583681 的颜色，否则查变体 7907773809 的尺寸"
+      }
+    }
+  ],
+  "P03": [
+    {
+      "id": "list",
+      "kind": "product_info",
+      "quote": "list the variants for speaker product 4768869376",
+      "target": "4768869376",
+      "output": "variants",
+      "depends_on": []
+    },
+    {
+      "id": "receipt",
+      "kind": "order_lookup",
+      "quote": "use that list to identify the matching purchased item IDs on order #W6750959",
+      "target": "#W6750959",
+      "output": "item_ids",
+      "depends_on": [
+        "list"
+      ]
+    },
+    {
+      "id": "spec",
+      "kind": "product_info",
+      "quote": "get the color of the matched speaker variant",
+      "target": "",
+      "output": "color",
+      "depends_on": [
+        "receipt"
+      ]
+    }
+  ],
+  "P04": [
+    {
+      "id": "list",
+      "kind": "product_info",
+      "quote": "列出商品 1075968781 的变体编号",
+      "target": "1075968781",
+      "output": "variants",
+      "depends_on": []
+    },
+    {
+      "id": "receipt",
+      "kind": "order_lookup",
+      "quote": "查订单 #W7678072 的已购商品编号",
+      "target": "#W7678072",
+      "output": "item_ids",
+      "depends_on": []
+    },
+    {
+      "id": "spec",
+      "kind": "product_info",
+      "quote": "查唯一匹配变体的颜色",
+      "target": "",
+      "output": "color",
+      "depends_on": [
+        "list",
+        "receipt"
+      ]
+    }
+  ],
+  "P05": [
+    {
+      "id": "rate",
+      "kind": "product_info",
+      "quote": "Read the ventilation rating of helmet variant 8153356023",
+      "target": "8153356023",
+      "output": "ventilation",
+      "depends_on": []
+    },
+    {
+      "id": "prep",
+      "kind": "return_change",
+      "quote": "prepare a return of item 8153356023 from order #W4892278 to gift_card_5501047",
+      "target": "#W4892278",
+      "output": "executed",
+      "depends_on": [
+        "rate"
+      ],
+      "run_if": {
+        "source": "rate",
+        "quote": "If the ventilation level is medium, prepare a return of item 8153356023 from order #W4892278 to gift_card_5501047; otherwise look up the status of receipt #W4892278"
+      }
+    },
+    {
+      "id": "status",
+      "kind": "order_lookup",
+      "quote": "look up the status of receipt #W4892278",
+      "target": "#W4892278",
+      "output": "status",
+      "depends_on": [
+        "rate"
+      ],
+      "run_if": {
+        "source": "rate",
+        "quote": "If the ventilation level is medium, prepare a return of item 8153356023 from order #W4892278 to gift_card_5501047; otherwise look up the status of receipt #W4892278"
+      }
+    }
+  ],
+  "P06": [
+    {
+      "id": "status",
+      "kind": "order_lookup",
+      "quote": "告诉我订单 #W8411016 的当前状态",
+      "target": "#W8411016",
+      "output": "status",
+      "depends_on": []
+    }
+  ],
+  "P07": [
+    {
+      "id": "pay",
+      "kind": "billing_lookup",
+      "quote": "check which payment method was used on order #W7841787",
+      "target": "#W7841787",
+      "output": "payment_type",
+      "depends_on": []
+    },
+    {
+      "id": "size",
+      "kind": "product_info",
+      "quote": "look up the size of helmet variant 7907773809",
+      "target": "7907773809",
+      "output": "size",
+      "depends_on": []
+    }
+  ],
+  "P08": [
+    {
+      "id": "receipt",
+      "kind": "order_lookup",
+      "quote": "Read the purchased item IDs from my single-item order #W6885344",
+      "target": "#W6885344",
+      "output": "item_ids",
+      "depends_on": []
+    },
+    {
+      "id": "size",
+      "kind": "product_info",
+      "quote": "use that returned item ID to find the backpack size",
+      "target": "",
+      "output": "size",
+      "depends_on": [
+        "receipt"
+      ]
+    }
+  ],
+  "P09": null,
+  "P10": null
+}

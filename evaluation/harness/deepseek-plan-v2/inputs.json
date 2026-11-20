@@ -1,0 +1,52 @@
+[
+  {
+    "key": "P01",
+    "language": "en",
+    "message": "Count all the items on receipt #W8750911. If the order contains at most two items, check the color of wall clock variant 9850781806; otherwise find the size of backpack variant 5917587651."
+  },
+  {
+    "key": "P02",
+    "language": "zh",
+    "message": "请查订单 #W6885344 里的商品件数。如果订单少于 2 件商品，就查变体 3254583681 的颜色，否则查变体 7907773809 的尺寸。"
+  },
+  {
+    "key": "P03",
+    "language": "en",
+    "message": "First list the variants for speaker product 4768869376. Next use that list to identify the matching purchased item IDs on order #W6750959. With that match, get the color of the matched speaker variant."
+  },
+  {
+    "key": "P04",
+    "language": "zh",
+    "message": "列出商品 1075968781 的变体编号，同时查订单 #W7678072 的已购商品编号。两份结果都齐全后，查唯一匹配变体的颜色。"
+  },
+  {
+    "key": "P05",
+    "language": "en",
+    "message": "Read the ventilation rating of helmet variant 8153356023. If the ventilation level is medium, prepare a return of item 8153356023 from order #W4892278 to gift_card_5501047; otherwise look up the status of receipt #W4892278."
+  },
+  {
+    "key": "P06",
+    "language": "zh",
+    "message": "先别取消订单。只要告诉我订单 #W8411016 的当前状态。"
+  },
+  {
+    "key": "P07",
+    "language": "en",
+    "message": "Independently, check which payment method was used on order #W7841787 and look up the size of helmet variant 7907773809."
+  },
+  {
+    "key": "P08",
+    "language": "en",
+    "message": "Read the purchased item IDs from my single-item order #W6885344. Then use that returned item ID to find the backpack size."
+  },
+  {
+    "key": "P09",
+    "language": "en",
+    "message": "Check order #W4143549. If it arrived earlier than promised, prepare a return of item 6867855179; otherwise tell me the current order status."
+  },
+  {
+    "key": "P10",
+    "language": "zh",
+    "message": "先查订单 #W6272294 的状态。如果我以后觉得不合适，就取消该订单，否则告诉我物流情况。"
+  }
+]
