@@ -8,7 +8,7 @@
 
 本次改造作用于零售 `dag` 模式，覆盖 LangGraph 和 legacy 两个入口。默认路由继续使用 `keyword`，`subintent` 保留作对照。第一版串行执行就绪节点。角色能力、身份归属、写操作确认、预算和已有人工交接规则继续生效。并行执行、任意代码条件、自动生成工具以及更换模型均在本次范围之外。
 
-当前规划器会把节点按角色分组，当前执行器仅为成功读单后的商品查询追加同轮调度，角色结果按角色名记录。改造后，同一角色可多次执行不同节点。以“查头盔变体 → 核对我买的变体 → 查该变体的通风等级”为例，在读单归 Billing 的实验配置下，三个节点依次由 Technical、Billing、Technical 执行，两次 Technical 的目标、证据和状态各自保留。[当前规划器](core/retail_subtasks.py) · [当前编排器](agents/agent_orchestrator.py) · [运行配置](agents/retail_runtime.py)
+当前规划器会把节点按角色分组，当前执行器仅为成功读单后的商品查询追加同轮调度，角色结果按角色名记录。改造后，同一角色可多次执行不同节点。以“查头盔变体 → 核对我买的变体 → 查该变体的通风等级”为例，在读单归 Billing 的实验配置下，三个节点依次由 Technical、Billing、Technical 执行，两次 Technical 的目标、证据和状态各自保留。[当前规划器](../core/retail_subtasks.py) · [当前编排器](../agents/agent_orchestrator.py) · [运行配置](../agents/retail_runtime.py)
 
 ## 2. 功能需求与验收条件
 
@@ -43,7 +43,7 @@
 
 角色负责专业工作。Scheduler 从具备对应能力、当前可用的角色中选择执行者。任务可用工具是**角色白名单、任务白名单、运行模式白名单的交集**。工具列表展示和执行前 Hook 使用同一判断。角色提示词携带当前任务目标与权限。General 降级执行也必须重新通过相同判断。
 
-Technical 的商品任务只获得适用的商品及知识只读工具；Billing 的订单查询任务只能查单；General 按配置承担一般处理；Escalation 的交接必须有相应的交接依据。当前普通 Technical 的只读集合还包含用户和订单查询，因此仅移除 `PrimaryOnlyHook` 会扩大实际可用范围。项目默认 owner 与实验的 `order_lookup → billing` 覆盖分别测试。[工具集合](agents/retail_tools.py) · [角色工具筛选](agents/retail_multi_agent.py) · [现有守卫](agents/retail_hooks.py)
+Technical 的商品任务只获得适用的商品及知识只读工具；Billing 的订单查询任务只能查单；General 按配置承担一般处理；Escalation 的交接必须有相应的交接依据。当前普通 Technical 的只读集合还包含用户和订单查询，因此仅移除 `PrimaryOnlyHook` 会扩大实际可用范围。项目默认 owner 与实验的 `order_lookup → billing` 覆盖分别测试。[工具集合](../agents/retail_tools.py) · [角色工具筛选](../agents/retail_multi_agent.py) · [现有守卫](../agents/retail_hooks.py)
 
 身份绑定须经现有服务端流程。写操作按原规则准备、原样展示确认详情，并在后续真实用户消息确认相同对象和参数后提交。用户改参数需重新准备和展示；取消或换单使旧授权失效。交接摘要、角色回复和检查点都不能代替确认。
 
@@ -55,7 +55,7 @@ Technical 的商品任务只获得适用的商品及知识只读工具；Billing
 
 ### R5　跨轮持久化、恢复与去重
 
-建议在现有 SQLite 库内增设独立的编排记录，由两个执行入口共用。保存版本化计划、节点状态、尝试、条件判定、最小输出和证据引用，关联会话、绑定用户、等待原因及 `op_id`。业务表仍是身份、订单、确认展示和成功事件的权威来源。LangGraph checkpoint 负责工作流位置，仅引用计划；legacy 从同一编排记录恢复。请求内的 `call` 和既有客服诉求清单各自保留原用途。[工作流恢复](agents/retail_workflow.py) · [业务记录](mcp_tools/retail_store.py)
+建议在现有 SQLite 库内增设独立的编排记录，由两个执行入口共用。保存版本化计划、节点状态、尝试、条件判定、最小输出和证据引用，关联会话、绑定用户、等待原因及 `op_id`。业务表仍是身份、订单、确认展示和成功事件的权威来源。LangGraph checkpoint 负责工作流位置，仅引用计划；legacy 从同一编排记录恢复。请求内的 `call` 和既有客服诉求清单各自保留原用途。[工作流恢复](../agents/retail_workflow.py) · [业务记录](../mcp_tools/retail_store.py)
 
 恢复已等待的计划前，核对会话、身份、业务目标和本轮输入。用户继续原请求时复用计划；改目标时使受影响节点和旧授权失效，独立新问题不能被当成确认。取消时关闭对应计划或分支，记录取消原因。旧会话没有新契约版本时走兼容入口，不从角色摘要推断节点已完成。
 
@@ -63,9 +63,9 @@ Technical 的商品任务只获得适用的商品及知识只读工具；Billing
 
 ### R6　回复、API 与轨迹
 
-Composer 每轮收尾一次，读取原始诉求、全部适用节点的状态和可公开证据，并能区分条件跳过和任务遗漏。订单查得 2 件、规格查询失败时，答复应包含“订单有 2 件商品；暂时无法确认头盔的通风等级”。退货准备完成时，先说明查到的结果和选择依据，再原样展示确认详情。成功提交和成功交接的表述均须能回溯到业务记录。Composer 无模型时也须按相同规则生成确定性回复。[现有汇总](agents/agent_orchestrator.py) · [回复校验](agents/retail_response_guard.py)
+Composer 每轮收尾一次，读取原始诉求、全部适用节点的状态和可公开证据，并能区分条件跳过和任务遗漏。订单查得 2 件、规格查询失败时，答复应包含“订单有 2 件商品；暂时无法确认头盔的通风等级”。退货准备完成时，先说明查到的结果和选择依据，再原样展示确认详情。成功提交和成功交接的表述均须能回溯到业务记录。Composer 无模型时也须按相同规则生成确定性回复。[现有汇总](../agents/agent_orchestrator.py) · [回复校验](../agents/retail_response_guard.py)
 
-对外区分本轮状态与整项任务成功。建议增加 `orchestration_mode`、`turn_status` 和按实际先后排列的 `task_runs`。等待确认可以是正确的本轮结果，端到端完成仍需后续成功事件。DAG 输出不回填虚构的主角色；原模式和旧回放继续支持原字段。API、前端和评测均能显示同一角色的多次调用。任务轨迹暴露节点及必要引用，避免传出完整私有订单或写入凭据。[API](api/main.py) · [前端追踪](web/src/components/TraceTree.tsx) · [旧评分器](evaluation/harness/routing_ablation.py)
+对外区分本轮状态与整项任务成功。建议增加 `orchestration_mode`、`turn_status` 和按实际先后排列的 `task_runs`。等待确认可以是正确的本轮结果，端到端完成仍需后续成功事件。DAG 输出不回填虚构的主角色；原模式和旧回放继续支持原字段。API、前端和评测均能显示同一角色的多次调用。任务轨迹暴露节点及必要引用，避免传出完整私有订单或写入凭据。[API](../api/main.py) · [前端追踪](../web/src/components/TraceTree.tsx) · [旧评分器](../evaluation/harness/routing_ablation.py)
 
 ## 3. 三组评测口径
 
