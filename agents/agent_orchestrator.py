@@ -33,6 +33,7 @@ from agents.tools import (
     technical_tools,
     validate_tool_input,
 )
+from core.agent_context_budget import ContextLimit
 from agents.agent_loop import LoopError, LoopHook, MethodHook, run_tool_loop
 from core.intent_recognizer import IntentCategory, IntentRecognizer, UrgencyLevel
 from core.llm_utils import extract_text_content
@@ -51,12 +52,12 @@ def _stop_exception(ex: BaseException) -> bool:
     )
 
     from core.dag_tool_log import JournalConflict
-    return isinstance(ex, (BudgetExceeded, TurnRequestLimitExceeded, JournalConflict))
+    return isinstance(ex, (BudgetExceeded, TurnRequestLimitExceeded, JournalConflict, ContextLimit))
 
 
 def _request_stop(req: "Request", ex: BaseException) -> bool:
     """只有零售编排请求才穿透业务层；单 Agent 评测保留原有失败语义。"""
-    return getattr(req, "retail_guard", None) is not None and _stop_exception(ex)
+    return isinstance(ex, ContextLimit) or (getattr(req, "retail_guard", None) is not None and _stop_exception(ex))
 
 
 # ── 数据结构 ──────────────────────────────────────────────────────────────────
@@ -140,6 +141,18 @@ class AgentResponse:
     fallback_used: bool = False
     meta: Dict[str, Any] = field(default_factory=dict)
 
+    @classmethod
+    def context_stopped(cls, error, req, agent_type, language, previous=()):
+        req.retail_routing["context_limit"] = {k: error.decision[k] for k in ("stage", "layer", "reason")}
+        completed = [*previous, *([error.partial] if error.partial else [])]
+        return cls(agent_type=agent_type, success=False,
+                   content=("Further model processing stopped at the context limit." if language == "en"
+                            else "模型请求达到上下文上限，本轮已停止后续处理。"),
+                   tools_used=[tool for part in completed for tool in part.tools_used],
+                   tool_traces=[trace for part in completed for trace in part.tool_traces],
+                   knowledge_hits=sum(part.knowledge_hits for part in completed),
+                   meta={"routing_reason": "context_limit"})
+
 
 @dataclass
 class AgentCallResult:
@@ -193,6 +206,7 @@ class Request:
     retail_handoff: Optional[Dict[str, Any]] = None
     retail_task: Dict[str, Any] = field(default_factory=dict)
     retail_routing: Dict[str, Any] = field(default_factory=dict)
+    dag_source: dict = field(default_factory=dict)
     # 零售路径：上下文编排器给出的起始消息（按角色与工具集生成）、本轮工具往返与追踪片段。
     context_view: Optional[Any] = None
     transcript: Optional[List[Dict[str, Any]]] = None
@@ -1426,9 +1440,13 @@ class AgentOrchestrator:
                 at for at in decision.supporting_agents if at != decision.primary_agent
             ][:2]
             req.retail_primary = decision.primary_agent.value
-            supporting_responses = [
-                await self._execute(req, at) for at in supporting
-            ]
+            supporting_responses = []
+            try:
+                for at in supporting:
+                    supporting_responses.append(await self._execute(req, at))
+            except ContextLimit as exc:
+                exc.previous = supporting_responses
+                raise
             if getattr(self, "retail_support_enabled", False):
                 from agents.retail_support import merge_role_handoff
 
@@ -1440,7 +1458,11 @@ class AgentOrchestrator:
                         req.turn,
                         response,
                     )
-            primary_response = await self._execute(req, decision.primary_agent)
+            try:
+                primary_response = await self._execute(req, decision.primary_agent)
+            except ContextLimit as exc:
+                exc.previous = supporting_responses
+                raise
             valid_responses = supporting_responses + [primary_response]
             # Composer 以主角色结论为主，辅助内容附后。
             ordered_responses = [primary_response] + supporting_responses
@@ -1465,7 +1487,11 @@ class AgentOrchestrator:
         """共享主辅结果合成；角色工作图与原调度保持同一口径。"""
         retail_mode = bool(getattr(self, "retail_mode", False))
         agent_types = decision.agent_types
-        composer_result = await self._compose(req, ordered_responses)
+        try:
+            composer_result = await self._compose(req, ordered_responses)
+        except ContextLimit as exc:
+            exc.previous = valid_responses
+            raise
         combined = composer_result.content
         if retail_mode:
             escalated = self._escalation_recorded(valid_responses)

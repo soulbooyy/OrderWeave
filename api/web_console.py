@@ -33,6 +33,7 @@ from fastapi.responses import FileResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
+from agents.retail_agent import public_retail_turn  # noqa: E402
 from monitor import live_events  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -482,7 +483,7 @@ async def run_turn(session: WebSession, message: str) -> asyncio.Queue:
         push({"type": "turn_start", "message": message})
         try:
             with live_events.capture(sink):
-                result = await session.runtime.service.handle_turn(message, session.client_id, session.conv_id)
+                result = await public_retail_turn(session.runtime.service, message, session.client_id, session.conv_id)
             refresh({"turn_end": True})
             session.turn_snapshots[turn] = session.snapshot
             summary = session.runtime.ledger.summary()

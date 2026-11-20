@@ -23,6 +23,7 @@ from agents.agent_orchestrator import (
 )
 from agents.retail_support import handoff_summary_from_packet
 from agents.retail_handoff import handoff_note
+from core.agent_context_budget import ContextLimit
 from agents.retail_hooks import role_hooks
 from agents.retail_tools import RETAIL_READ_ONLY_TOOLS, ROLE_TOOLS, TASK_TOOLS
 from agents.tools import validate_tool_input
@@ -577,7 +578,7 @@ class RetailMultiAgent:
         try:
             result = await self.orchestrator.run(req)
         except Exception as ex:
-            return self.fail_turn(ex, t0)
+            return self.fail_turn(ex, t0, req)
         return self.finish_turn(req, result, t0)
 
     def begin_turn(self, req: Request) -> float:
@@ -602,8 +603,11 @@ class RetailMultiAgent:
         }
         return t0
 
-    def fail_turn(self, ex, t0):
+    def fail_turn(self, ex, t0, req=None, previous=()):
         """保留预算穿透与原失败响应，不触发重放。"""
+        if isinstance(ex, ContextLimit) and req is not None:
+            return AgentResponse.context_stopped(ex, req, self.agent_type, self.language,
+                                                 getattr(ex, "previous", previous))
         if _stop_exception(ex):
             raise ex
         ms = (time.monotonic() - t0) * 1000

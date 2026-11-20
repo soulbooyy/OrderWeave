@@ -20,6 +20,8 @@ if _ROOT not in sys.path:
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from agents.retail_agent import public_retail_turn
+from core.agent_context_budget import ContextLimit
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
@@ -474,9 +476,12 @@ async def chat(req: ChatRequest):
     if _retail_runtime is not None:
         conv_id = req.conv_id or str(uuid.uuid4())
         try:
-            result = await _retail_runtime.service.handle_turn(
-                req.message, req.user_id, conv_id
+            result = await public_retail_turn(
+                _retail_runtime.service, req.message, req.user_id, conv_id
             )
+        except ContextLimit as ex:
+            raise HTTPException(422, {"code": "context_limit", "stage": ex.decision["stage"],
+                                      "reason": ex.decision["reason"]}) from ex
         except ValueError as ex:
             raise HTTPException(400, str(ex))
         return ChatResponse(
@@ -830,10 +835,10 @@ async def _retail_cli() -> None:
                 print("再见")
                 break
             try:
-                result = await runtime.service.handle_turn(
-                    message, user_id, conv_id
+                result = await public_retail_turn(
+                    runtime.service, message, user_id, conv_id
                 )
-            except ValueError as ex:
+            except (ContextLimit, ValueError) as ex:
                 print(f"\n系统: {ex}\n")
                 continue
             roles = ",".join(result.agent_types) or "retail"

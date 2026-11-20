@@ -242,6 +242,36 @@ python -m pytest -q -rs -p no:cacheprovider tests
 - **命令**：`.venv/bin/python -m pytest -q tests/test_agent_context_budget.py tests/test_json_stage_budgets.py tests/test_retail_ledger.py tests/test_dag_tool_log.py tests/test_context_engine.py tests/test_retail_dag_scheduler.py`。
 - **风险 / 回退 / 交付**：估算偏小导致供应商拒绝，字节上界过宽导致误停，返回后的异常可能吞掉 partial traces。保留已完成原件和受控停止；enforce 可退回 observe/off，现有硬费用和业务守卫继续生效。交付预算检查、计数误差分布、裁剪优先级与跨 stage 覆盖表。
 
+#### Phase 3 离线验收记录 · 2026-11-21
+
+原工作区 `/Users/soulboy/projects/OrderWeave`，分支 `codex/retail-routing-ablation`。Phase 1 基线为 `44828a3`，Phase 2 基线为 `5fa3f33`。本次验收使用既有 SQLite 账本和离线脚本模型。
+
+| 发送入口 | 调用路径与停止行为 |
+|---|---|
+| 零售角色及单 Agent | 工具循环组装 system、messages 和实际工具 schema。最后一个 `pre_model` 为 `AgentContextBudgetHook`。它用传输层补齐参数后的请求预检。只有持有宿主 Task 元数据和可核验证据的请求可以裁剪。 |
+| DAG Planner、JSON 修正、旧路由分类、确认、清单和事实抽取 | 各 stage 通过共享 `BudgetedClient` 终检。分类 JSON 的第二次请求重新计算。硬拒绝保留 `context_limit`，不消耗该次请求配额或费用。 |
+| 历史摘要、可选记忆、检索改写和重排、旧 Composer | 同一终检测量各自的完整请求。可选压缩失败保留原摘要和工作记忆。DAG Composer 继续按 Run 证据确定性组装回复。 |
+| 所有实际发送 | `_BudgetedMessages.create` 补齐 thinking，调用 `ModelRequestBudgetGuard.final` 校验窗口与工具批次，然后扣轮次配额、预留费用、发送、结算。预算事件只含计量、标识、动作和原因。 |
+
+**开关与计数。** `RETAIL_MODEL_CONTEXT_MODE` 默认 `off`。`observe` 在临时副本上推演裁剪，记录动作及可用 usage，发送原请求。`enforce` 要求针对当前传输端及模型版本注册可靠的 `ModelProfile.count`，通过 `build_retail_runtime(..., context_guard=...)` 注入。判定为完整输入 I 加输出预留 O 加安全余量 M 小于或等于 W。该接口要求计数器覆盖最终模板和协议，且 max_tokens 包含 thinking 输出。真实 usage 与已登记上界相抵触时，同一运行时后续阶段停止信任该配置。
+
+当前端点使用 `deepseek-flash`。供应商公布该别名映射至 DeepSeek-V4.1-Flash-1017，窗口 1M。观测配置保守取 W = 1,000,000、M = 1,024，O 取请求的 max_tokens。I 估算复用完整请求 UTF-8 JSON 字节数加 512，含 system、全部 schema、消息和供应商扩展字段。现有样本尚不能给兼容层私有模板证明最大误差，线上该配置请求 enforce 会显式停止。离线硬边界由受控计数器验证。[模型及版本](https://api-docs.deepseek.com/quick_start/pricing/) · [Anthropic 兼容接口和 usage 口径](https://api-docs.deepseek.com/guides/anthropic_api/)
+
+只读抽查已有 `data/evaluation/deepseek-routing-pilot/live/probe/*/dag/ledger.sqlite`。以下为 29 笔带 usage 的历史发送，差值是账本的 input_tokens_upper 减已结算总输入，含缓存读写。P95 采用最近秩。该抽样没有产生新模型调用。
+
+| stage | 笔数 | 最小差值 | 中位差值 | P95 差值 | 最大差值 |
+|---|---:|---:|---:|---:|---:|
+| plan | 8 | 1,959 | 1,990 | 2,018 | 2,018 |
+| intent | 8 | 2,962 | 3,050.5 | 3,131 | 3,131 |
+| roles | 11 | 10,350 | 16,072 | 18,111 | 18,111 |
+| composer | 2 | 2,070 | 2,522 | 2,974 | 2,974 |
+
+**连续调用与证据。** legacy 和 LangGraph 均以四次实际发送验收。第一次和第二次保留原消息。第二次调用产生两个带独立 ID 的工具结果，第三次裁旧背景，再按当前输出契约投影只读事实，第四次逐块沿用第三次已发送前缀并追加唯一的新往返。引用替换仅用于旧的重复事实，并须通过当前 claim、角色、会话和工具范围取回原件。刚返回的必要结果缺少安全投影时，发送次数停在上一次。逐项核对四个 J 回包的 SHA-256、工具 trace、全局 context_state 及摘要，重开 LangGraph 检查包括中间节点在内的 checkpoint。新的 Task/attempt 从自己的授权输入开始。
+
+**写后停止与后续依赖。** 首发被拒时工具调用数为零。prepare 后保留当前操作及服务端确认卡。commit 后核验实际事件并保留 event ref。提交成功但回包遗失时仅按业务凭证对账，缺凭证时标记 unknown_result。两种后端的故障注入均未重复执行业务写入。Phase 3 将未完成后继节点的续办以及停止至发布之间的原轮恢复交给 Phase 4，验收结果见下节。当前实现遵守既有调度、确认和幂等边界。
+
+**测试记录。** observe 红灯转绿后，其与账本、JSON 预算的首批验收 18 项通过，再启用 enforce 的硬边界测试。最终新增专项 48 项通过，本节定向集合 163 项通过，Phase 0～1、DAG、权限、动作和确认集合 200 项通过。全量离线 `tests` 共 498 项通过，1 项 Windows 专属内存接口跳过，1 条既有 Starlette/AnyIO 弃用警告。集合有交集。执行命令沿用第 1 节的离线参数。
+
 ### Phase 4　统一收口、恢复及跨轮一致性
 
 对同轮 Planner、各角色、最终发布和恢复分支比较绑定、历史高水位、摘要锚点及已发布回复。各角色在同一快照上依权限缩小可见范围，收口继续核对 Run 和业务事件。
@@ -253,6 +283,22 @@ python -m pytest -q -rs -p no:cacheprovider tests
 - **验收**：单节点额外 composer 模型调用 0；多 Task 回复包含每个适用的已证输出，失败/遗漏标未核实，条件假跳过不计遗漏。准备未执行，确认卡逐字符与业务库一致，真实确认前提交事件 0，提交后重启仍仅 1 个同参数事件；查不到回执时 blocked/unknown 且工具重放 0。预算停后仍给出可验证的部分结论及停止原因，全局硬停止信号可追踪。下一轮能看到上轮获准历史；同一 summary.upto_turn 成功后重复准备或恢复的新增摘要调用为 0。API turn_status、Task 状态、守卫结果、所记最终回复一致，旧 checkpoint 回放通过。
 - **命令**：`.venv/bin/python -m pytest -q tests/test_dag_context_recovery.py tests/test_retail_dag_scheduler.py tests/test_retail_actions.py tests/test_retail_confirmation.py tests/test_dag_mcp_handoff.py tests/test_retail_role_permissions.py tests/test_web_console.py`。
 - **风险 / 回退 / 交付**：checkpoint 可落后于业务提交，op 已 prepared 不代表用户看过，响应已送达客户端也不是数据库能独立证明的事实。维持现有“原卡进入最终回复且已记录 displayed”的保守边界；不清空 pending 或手工调低 revision。关闭新路径前排空或用兼容恢复器核实挂起计划。交付中断前后事件/引用/回复对账和两后端参数化测试。
+
+#### Phase 4 本地验收记录（2026-11-21）
+
+在原分支的 Phase 2 提交 `5fa3f33` 及现有 Phase 3 未提交改动上实施。legacy 和 LangGraph 均由 `RetailService.recover_dag` 处理原轮恢复。Execution 保存原始用户输入、绑定、请求标识、事件起点及对话快照锚点。LangGraph checkpoint 只增加 DAG revision。恢复依据原轮和计划读取持久化 Run，核对绑定、目标归属、操作参数和事件引用。旧 checkpoint 缺计划标识时必须唯一匹配；旧可见回复、原轮日志和重新核验的文本冲突时，请用户重新说明。
+
+| 故障位置 | 通过离线测试验证的结果 |
+|---|---|
+| 已保存 terminal Run，最终回复尚未落库 | 在原 turn 通过 Composer 与 Response Guard 收口，包括 inactive 计划和更换工作流后端。工具、模型、摘要调用均未重跑。 |
+| 已关闭原轮，服务返回或 checkpoint 落后 | 复用原回复和守卫记录。单独删除 user 或 assistant 行后，可在原 seq 修复公开对话，保留既有工具批次。 |
+| prepare 后、确认卡发布前 | 精确确认卡和 displayed 标记与最终回复在同一 SQLite 事务内提交。未展示的准备操作在恢复时撤回，新的确认请求不能执行旧卡。 |
+| 写入后的费用或请求数硬停止 | 服务层保留原异常，并附带核验后的部分结果。交互入口返回该结果和 Task 状态。只有匹配的业务事件可证明已执行；恢复不重提写入。显式续办仅调度可安全执行的剩余节点。 |
+| 跨轮历史或授权变化 | Planner 与角色沿用同一原轮历史和摘要边界；恢复不刷新摘要。过期目标、新候选、换绑或证据冲突需重新核实。下一真实轮可读取上轮获准发布的回复。 |
+
+**测试。** 新增故障恢复专项 39 项通过。本节定向集合 141 项通过。Phase 0～3 的上下文、工具日志、预算和规划回归集合 159 项通过。全量运行 `.venv/bin/python -m pytest -q -rs -p no:cacheprovider tests`，537 项通过，1 项 Windows 内存接口在 macOS 跳过，另有 1 条 Starlette/AnyIO 弃用警告。集合有交集。
+
+**恢复边界。** 服务已记录最终回复只能证明服务端已完成该轮，不能证明客户端已收到。同一请求在服务返回后因网络丢包再次提交，仍缺少端到端交付回执。旧数据缺少可信发布或业务凭证时保留未核实状态。M/off 下进程退出前未落库的工具原件不能补造。本阶段沿用原有 SQLite 表；J 的生产保留策略和负载验证仍待人工决定。
 
 ### Phase 5　消融、性能验收与启用决定
 
@@ -345,4 +391,4 @@ python -m pytest -q -rs -p no:cacheprovider tests
 | BudgetGuard 按 off → observe → enforce 启用，单个 attempt 延续临时裁剪视图 | 第 4.3 节、Phase 3 |
 | 采用 A/B/C/D 消融，分开判定硬性安全与功能/性能门槛 | Phase 5、第 7 节 |
 
-本次停在 Phase 2 本地实现和离线验收的人工审查点。后续开发使用原工作区和原分支。正式启用 J 前需确定工具原件的访问与保留期限，并评估目标负载下的 SQLite 写锁和存储成本。Phase 3～5、最小 DDL、付费运行与默认启用分别由人工决定。
+本次停在 Phase 4 本地实现和离线验收的人工审查点。Phase 3、4 改动保留在原工作区和原分支，等待人工决定是否提交。正式启用 J 前需确定工具原件的访问与保留期限，并评估目标负载下的 SQLite 写锁和存储成本。Phase 5、最小 DDL、付费运行与默认启用分别由人工决定。

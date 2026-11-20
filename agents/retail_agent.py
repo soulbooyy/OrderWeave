@@ -33,10 +33,13 @@ from agents.retail_support import (
     update_support_record,
 )
 from agents.retail_tools import RETAIL_READ_ONLY_TOOLS, retail_tool_scope, retail_tools
+from core.dag_tool_log import JournalConflict
+from core.agent_context_budget import ContextLimit
+from evaluation.retail_budget import BudgetExceeded, TurnRequestLimitExceeded
 from agents.retail_hooks import single_agent_hooks
 from agents.retail_response_guard import constrain_response, return_lookup_basis
 from core.task_context import ConversationContextBuilder, DEFAULT_RECENT_TURNS, identifiers
-from mcp_tools.retail_store import RetailStore, SupportStateError
+from mcp_tools.retail_store import DagRevisionConflict, RetailStore, SupportStateError
 from monitor import live_events
 
 logger = logging.getLogger(__name__)
@@ -312,6 +315,19 @@ class RetailTurnResult:
                 "plan_id": dag.get("plan_id", "")}
 
 
+async def public_retail_turn(service, message, client, conv):
+    """Surface the settled DAG facts to interactive clients while the ledger stays stopped."""
+    try:
+        return await service.handle_turn(message, client, conv)
+    except (BudgetExceeded, TurnRequestLimitExceeded) as exc:
+        result = getattr(exc, "turn_result", None)
+        if result is None:
+            raise
+        if result.semantic_routing.get("dag"):
+            service.store.acknowledge_dag(client, conv, result.turn, result.request_id)
+        return result
+
+
 class RetailService:
     """零售模式的唯一会话入口；API 与 CLI 共用。"""
 
@@ -434,8 +450,180 @@ class RetailService:
             )
         async with self._lock_for(client_user_id, conv_id):
             if self.workflow is not None:
-                return await self.workflow.handle_turn(text, client_user_id, conv_id)
-            return await self._handle_turn_locked(text, client_user_id, conv_id)
+                result = await self.workflow.handle_turn(text, client_user_id, conv_id)
+            else:
+                result = self.recover_dag(client_user_id, conv_id, signal=text)
+                if (result is not None and result.routing_reason == "unverified_recovery"
+                        and text.lower() not in {"continue", "继续"}):
+                    # A new request after rebinding starts with the current identity.
+                    result = None
+                if result is None:
+                    result = await self._handle_turn_locked(text, client_user_id, conv_id)
+            if result.semantic_routing.get("dag"):
+                self.store.acknowledge_dag(client_user_id, conv_id, result.turn, result.request_id)
+            return result
+
+    def _recovery_failure(self, turn):
+        text = ("The interrupted task could not be verified. Please restate the request."
+                if self.language == "en" else "无法核实上次中断的任务，请重新说明请求。")
+        checked = constrain_response(text, traces=[], events=[], pending_before=[], pending_after=[],
+                                     turn=turn, bound_user_id=None, language=self.language)
+        return RetailTurnResult(
+            response=checked.text, response_guard=checked.record,
+            success=False, agent_type=AgentType.RETAIL, request_id="", turn=turn, latency_ms=0,
+            orchestration_mode="dag", routing_reason="unverified_recovery")
+
+    def recover_dag(self, client, conv, *, checkpoint=None, signal=""):
+        """A losing recovery re-reads the winner's receipt or latest claim."""
+        for _ in range(2):
+            try:
+                return self._read_dag_recovery(client, conv, checkpoint, signal)
+            except DagRevisionConflict:
+                continue
+        return self._recovery_failure(self.store.current_turn(client, conv))
+
+    def _read_dag_recovery(self, client, conv, checkpoint, signal):
+        router = getattr(self.agent, "orchestrator", None)
+        if router is None:
+            return None
+        store = self.store
+        current = store.current_turn(client, conv)
+        if not current:
+            return None
+        turn = (checkpoint or {}).get("turn") or current
+        plan_id = (checkpoint or {}).get("plan_id") or None
+        minimum_revision = (checkpoint or {}).get("dag_revision", 0)
+        if turn != current:
+            return self._recovery_failure(turn) if checkpoint is not None else None
+        bound = store.bound_user_id(client, conv)
+        pair = store.dag_publication(client, conv, turn)
+        if pair:
+            receipt = pair["dag_receipt"]
+            if checkpoint is None and receipt.get("finished"):
+                return None
+            if ((plan_id and receipt["plan_id"] != plan_id) or receipt["bound"] != bound
+                    or receipt["revision"] < minimum_revision):
+                return self._recovery_failure(turn)
+            executions = store.recovery_dags(client, conv, turn, plan_id)
+            if (len(executions) != 1 or executions[0].plan.id != receipt["plan_id"]
+                    or executions[0].revision != receipt["revision"]
+                    or not self._may_publish(executions[0], client, conv, bound)):
+                return self._recovery_failure(turn)
+            source = executions[0].source
+            rows = self._recovery_rows(source, bound, pair["assistant"], pair["response_guard"])
+            try:
+                store.repair_dag_log(client, conv, turn, pair, rows)
+            except JournalConflict:
+                return self._recovery_failure(turn)
+            return RetailTurnResult(response=pair["assistant"], success=receipt["success"],
+                                    agent_type=AgentType.RETAIL, turn=turn, latency_ms=0,
+                                    request_id=receipt["request_id"], response_guard=pair["response_guard"],
+                                    semantic_routing=receipt["routing"], prepared_op_ids=receipt["prepared"],
+                                    escalated=receipt["escalated"], orchestration_mode="dag",
+                                    routing_reason="dag_tasks")
+        executions = store.recovery_dags(client, conv, turn, plan_id)
+        if not executions:
+            interrupted = (signal.lower() in {"continue", "继续"} and getattr(router, "routing_mode", "") == "dag"
+                           and store.last_visible_turn(client, conv).get("turn") != turn
+                           and not store.active_pending(client, conv))
+            return self._recovery_failure(turn) if checkpoint is not None or interrupted else None
+        if len(executions) != 1:
+            return self._recovery_failure(turn)
+        state = executions[0]
+        source = state.source
+        if not source and checkpoint is None:
+            if (signal.lower() not in {"continue", "继续"} or
+                    store.last_visible_turn(client, conv).get("turn") == turn):
+                return None  # Allow a new input on an already-published pre-upgrade turn.
+        if state.revision < minimum_revision or not self._may_publish(state, client, conv, bound):
+            return self._recovery_failure(turn)
+        from agents.retail_dag_runner import DagRunner
+        req = Request(source.get("message", ""), client, conv, turn=turn, retail_store=store,
+                      retail_user_id=bound, request_id=source.get("request_id", ""))
+        runner = DagRunner(router, req, state)
+        runner.reconcile()
+        if state.stop == "confirmation":
+            pending = next((p for p in store.active_pending(client, conv)
+                            if p["op_id"] == state.operation.get("op_id")), None)
+            if not pending or pending["status"] != "displayed":
+                if pending:
+                    store.retire_unpublished_card(state, pending["op_id"])
+                for run in state.runs.values():
+                    if run.reason == "confirmation" and run.status.value == "waiting_user":
+                        from core.retail_dag import Status
+                        run.move(Status.BLOCKED, reason="interrupted_before_display")
+                state.stop, state.operation = "interrupted_before_display", {}
+                runner.save()
+        reason = source.get("stop_reason")
+        if reason in {"budget_stop", "request_limit"}:
+            req.retail_routing["hard_stop"] = reason
+        elif source.get("context_limit"):
+            req.retail_routing["context_limit"] = source["context_limit"]
+        outcome = runner.finish()
+        refs = {ref for run in state.runs.values() for ref in run.refs}
+        history = [e for e in store.list_events(client, conv) if f"event:{e['event_id']}" in refs]
+        events = [e for e in history if e["event_id"] > source.get("event_floor", float("inf"))]
+        displayed = [p for p in store.active_pending(client, conv) if p["status"] == "displayed"
+                     and p["op_id"] == state.operation.get("op_id")]
+        checked = self._guard_reply(req, outcome.response, [], events, displayed, displayed, history)
+        result = RetailTurnResult(response=checked.text, success=bool(outcome.success and not checked.record.get(
+            "recovery_signature")), agent_type=AgentType.RETAIL, request_id=req.request_id, turn=turn, latency_ms=0,
+            response_guard=checked.record, semantic_routing=req.retail_routing, orchestration_mode="dag",
+            routing_reason="dag_tasks")
+        if source:
+            rows = self._recovery_rows(source, bound, result.response, checked.record)
+            try:
+                self._publish_dag(req, result.response, result.success, checked.record, rows=rows)
+            except JournalConflict:
+                return self._recovery_failure(turn)
+        elif store.last_visible_turn(client, conv).get("turn") == turn:
+            if not store.verify_legacy_publication(state, turn, bound, result.response):
+                return self._recovery_failure(turn)
+        return result
+
+    def _recovery_rows(self, source, bound, text, guard):
+        if not source.get("compiled"):
+            return None
+        from core.context_engine import ContextEngine
+        engine = self.context_engine or ContextEngine(self.store, language=self.language)
+        snapshot = {"turn": source["turn"], "bound_user_id": source["bound"], "final_bound_user_id": bound}
+        if source.get("audience") and not guard.get("recovery_signature"):
+            snapshot["dialogue_audience"] = source["audience"]
+        blocks = engine.user_blocks(source["turn"], snapshot, source["message"])
+        return engine.log_rows(blocks, [], text)
+
+    def _may_publish(self, state, client, conv, bound):
+        from core.retail_subtasks import PRIVATE
+        from core.task_context import verified_entity
+        if (state.bound_user or None) != bound:
+            return False
+        for task in state.plan.nodes:
+            target = state.target(task)[0]
+            if (task.kind in PRIVATE and state.runs[task.id].status.value in {"succeeded", "running"} and
+                    target and target.startswith("#") and
+                    not verified_entity(self.store, client, conv, "order", target, bound)):
+                return False
+        return True
+
+    def _guard_reply(self, request, text, traces, events, pending_before, pending_after, history, **options):
+        bound = self.store.bound_user_id(request.user_id, request.conv_id)
+        reason = request.retail_routing.get("hard_stop")
+        if not reason and request.retail_routing.get("context_limit"):
+            reason = "context_limit"
+        reason = reason or (request.retail_routing.get("dag") or {}).get("stop")
+        return constrain_response(text, traces=list(traces) + self._order_evidence(
+            request.user_id, request.conv_id, text, bound, pending_after), events=events,
+            session_events=history, pending_before=pending_before, pending_after=pending_after,
+            turn=request.turn, bound_user_id=bound, language=self.language, stop_reason=reason,
+            dag_confirmation_basis=request.dag_confirmation_basis, dag_post_write=request.dag_post_write, **options)
+
+    def _publish_dag(self, req, text, success, guard, *, rows, displays=(), escalated=False, **details):
+        dag = req.retail_routing["dag"]
+        receipt = dict(plan_id=dag["plan_id"], revision=dag["revision"], bound=req.retail_user_id,
+                       request_id=req.request_id, success=success, routing=req.retail_routing,
+                       prepared=[op for op, _ in displays], escalated=escalated, finished=False)
+        self.store.finish_dialogue(req.user_id, req.conv_id, req.turn, req.message, text, rows=rows,
+                                   response_guard=guard, dag_receipt=receipt, displays=displays, **details)
 
     async def _handle_turn_locked(
         self,
@@ -444,8 +632,28 @@ class RetailService:
         conv_id: str,
     ) -> RetailTurnResult:
         context = await self._prepare_turn(message, client_user_id, conv_id)
-        response = await self._execute_turn(context)
+        try:
+            response = await self._execute_turn(context)
+        except (BudgetExceeded, TurnRequestLimitExceeded) as exc:
+            await self.close_hard_stop(context, exc)
+            raise
         return await self._finish_turn(context, response)
+
+    async def close_hard_stop(self, context, exc):
+        runner = getattr(exc, "dag_runner", None)
+        req = context["request"]
+        if runner:
+            response = self.agent.finish_turn(req, runner.finish(), context["t0"])
+        elif getattr(getattr(self.agent, "orchestrator", None), "routing_mode", "") == "dag":
+            reason = "budget_stop" if isinstance(exc, BudgetExceeded) else "request_limit"
+            req.retail_routing["hard_stop"] = reason
+            partial = getattr(exc, "partial", None)
+            response = AgentResponse(AgentType.RETAIL, reason, False, meta={"routing_reason":reason},
+                                     tool_traces=partial.tool_traces if partial else [],
+                                     tools_used=partial.tools_used if partial else [])
+        else:
+            return
+        exc.turn_result = await self._finish_turn(context, response)
 
     async def _judge_confirmations(self, message, client_user_id, conv_id, turn, pending):
         """在 Agent 运行前由真实用户消息得出确认判定并持久化。"""
@@ -744,6 +952,11 @@ class RetailService:
 
             request.context_view = view
 
+        request.dag_source = dict(turn=turn, message=message, bound=bound_user_id, request_id=request.request_id,
+                                  event_floor=first_event_id, compiled=engine is not None)
+        if request.conversation_context:
+            request.dag_source.update(history_seq=max((r["seq"] for r in task_history), default=0),
+                                      summary_turn=(cstate.get("summary") or {}).get("upto_turn", 0))
         return {
             "t0": t0,
             "first_event_id": first_event_id,
@@ -785,7 +998,10 @@ class RetailService:
                 latency_ms=0.0,
             )
         else:
-            response = await self.agent.handle(request)
+            try:
+                response = await self.agent.handle(request)
+            except ContextLimit as ex:
+                response = AgentResponse.context_stopped(ex, request, self.agent.agent_type, self.language)
         return response
 
     async def _finish_turn(self, context, response):
@@ -830,19 +1046,16 @@ class RetailService:
                     and (same_op or (not prior.get("op_id") and prepared))
                     and not re.search(r"\b(if|instead|otherwise|unless)\b|改为|如果|否则", message, re.I)):
                 return_basis = prior
-        guarded = constrain_response(
-            text, traces=list(response.tool_traces or []) + self._order_evidence(
-                client_user_id, conv_id, text, current_bound_user, pending_after),
-            events=new_events,
-            pending_before=pending_before, pending_after=pending_after, turn=turn,
-            bound_user_id=current_bound_user,
-            session_events=self.store.list_events(client_user_id, conv_id),
-            user_order_ids=context["guard_order_ids"] if context.get("guard_order_ids") is not None else
-            self._user_order_ids(client_user_id, conv_id, message),
-            return_basis=return_basis, dag_confirmation_basis=request.dag_confirmation_basis,
-            dag_post_write=request.dag_post_write,
-            language=self.language,
-        )
+        dag = request.retail_routing.get("dag")
+        if dag:
+            records = self.store.recovery_dags(client_user_id, conv_id, turn, dag["plan_id"])
+            if len(records) != 1 or records[0].revision != dag["revision"] or not self._may_publish(
+                    records[0], client_user_id, conv_id, current_bound_user):
+                raise JournalConflict("DAG publication scope changed")
+        guarded = self._guard_reply(request, text, response.tool_traces or [], new_events, pending_before,
+                                    pending_after, self.store.list_events(client_user_id, conv_id),
+                                    user_order_ids=context["guard_order_ids"] if context.get("guard_order_ids") is not None
+                                    else self._user_order_ids(client_user_id, conv_id, message), return_basis=return_basis)
         guarded.record["facts_read_ms"] = round(facts_read_ms, 3)
         live_events.emit("guard", "response_guard", draft=text, final=guarded.text, record=guarded.record)
         text = guarded.text
@@ -875,12 +1088,16 @@ class RetailService:
                          if self.language == "en" else
                          "\n相同问题仍无法核实，本次处理已停止。您可补充上述信息，或明确要求人工协助。")
         display_failed: List[str] = []
+        displays = []
         for item in prepared:
             display_text = str(item.get("display_text") or "").strip()
             if not display_text:
                 continue
             if display_text not in text:
                 display_failed.append(str(item["op_id"]))
+                continue
+            if dag:
+                displays.append((str(item["op_id"]), str(item["op_id"]) in appended))
                 continue
             recorded = self.store.mark_pending_displayed(
                 client_user_id,
@@ -950,14 +1167,16 @@ class RetailService:
             if self.memory is not None:
                 from memory.conversation_memory import MsgRole
 
+                stopped = bool(request.retail_routing.get("context_limit") or request.retail_routing.get("hard_stop"))
+                append_options = {"compress": False} if stopped else {}
                 try:
                     await self.memory.add_message(
-                        client_user_id, conv_id, MsgRole.USER, message
+                        client_user_id, conv_id, MsgRole.USER, message, **append_options
                     )
                     await self.memory.add_message(
-                        client_user_id, conv_id, MsgRole.ASSISTANT, text
+                        client_user_id, conv_id, MsgRole.ASSISTANT, text, **append_options
                     )
-                    if self.profile_enabled:
+                    if self.profile_enabled and not stopped:
                         await self.memory.update_profile(client_user_id, conv_id)
                 except Exception as ex:
                     memory_error = f"写入记忆失败: {ex}"
@@ -988,8 +1207,13 @@ class RetailService:
                 context["user_content"] = self.context_engine.user_blocks(turn, context["snapshot"], message)
             log_rows = self.context_engine.log_rows(
                 context["user_content"] + list(context.get("turn_extra") or []), request.transcript or [], text)
-        self.store.finish_dialogue(client_user_id, conv_id, turn, message, text, rows=log_rows,
-                                   response_guard=guarded.record, catalog_steps=catalog_steps, return_basis=return_basis)
+        if dag:
+            self._publish_dag(request, text, bool(response.success), guarded.record, rows=log_rows, displays=displays,
+                              escalated=any(e["event_type"] == "handoff_requested" for e in new_events),
+                              catalog_steps=catalog_steps, return_basis=return_basis)
+        else:
+            self.store.finish_dialogue(client_user_id, conv_id, turn, message, text, rows=log_rows,
+                                       response_guard=guarded.record, catalog_steps=catalog_steps, return_basis=return_basis)
         latency_ms = (time.monotonic() - t0) * 1000
         new_events = [
             item for item in self.store.list_events(client_user_id, conv_id)

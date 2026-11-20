@@ -69,6 +69,8 @@
 !/tests/test_harness.py
 !/tests/test_retail_actions.py
 !/tests/test_retail_confirmation.py
+!/tests/test_dag_context_recovery.py
+!/tests/test_agent_context_budget.py
 !/tests/test_context_engine.py
 !/tests/test_retail_skills.py
 !/tests/test_task_facts.py

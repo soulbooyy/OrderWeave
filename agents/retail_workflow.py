@@ -22,12 +22,14 @@ from agents.agent_orchestrator import AgentResponse, AgentType, OrchestratorResu
 from agents.retail_dag_runner import DagRunner
 from agents.retail_handoff import RoleHandoff, RoleOutcome, build_role_handoff, role_outcome
 from agents.retail_support import analyze_message
+from evaluation.retail_budget import BudgetExceeded, TurnRequestLimitExceeded
 from mcp_tools.retail_store import evaluate_confirmation
 from monitor import live_events
 
 
 class RetailGraphState(TypedDict, total=False):
     plan_id: str
+    dag_revision: int
     current_task: str
     phase: str
     waiting_reason: str
@@ -129,7 +131,7 @@ class RetailWorkflow:
 
     @staticmethod
     def _reset_roles(call):
-        return {"plan_id": "", "active_role": "", "next_role": "", "role_queue": [], "handoff": {},
+        return {"plan_id": "", "dag_revision": 0, "active_role": "", "next_role": "", "role_queue": [], "handoff": {},
                 "role_result": call.get("previous_role_result", {})}
 
     async def _select_role(self, state):
@@ -144,7 +146,7 @@ class RetailWorkflow:
                 call["dag"] = prepared
                 role = prepared.next_role()
                 return self._step(state, "select_role", next_role=role or "compose_roles",
-                                  plan_id=prepared.state.plan.id, phase="dag_routed")
+                                  plan_id=prepared.state.plan.id, dag_revision=prepared.state.revision, phase="dag_routed")
             if isinstance(prepared, OrchestratorResult):
                 call["response"] = agent.finish_turn(req, prepared, call["agent_started"])
                 return self._step(state, "select_role", next_role="update_result")
@@ -157,9 +159,12 @@ class RetailWorkflow:
                         previous_role_result=call.get("previous_role_result", {}))
             queue = [role.value for role in supporting] + [prepared.primary_agent.value]
             return self._step(state, "select_role", next_role=queue[0], role_queue=queue, phase="role_routed")
+        except (BudgetExceeded, TurnRequestLimitExceeded) as exc:
+            await self.service.close_hard_stop(call["context"], exc)
+            raise
         except Exception as ex:
             call["role_error"] = True
-            call["response"] = agent.fail_turn(ex, call["agent_started"])
+            call["response"] = agent.fail_turn(ex, call["agent_started"], req, call.get("responses", ()))
             return self._step(state, "select_role", next_role="update_result", phase="role_failed")
         finally:
             call["business_ms"] += (time.perf_counter() - started) * 1000
@@ -168,8 +173,12 @@ class RetailWorkflow:
         call = self._call.get()
         req = call["context"]["request"]
         if "dag" in call:
-            await call["dag"].execute()
-            return self._step(state, role, active_role=role, phase="dag_executed")
+            try:
+                await call["dag"].execute()
+            except (BudgetExceeded, TurnRequestLimitExceeded) as exc:
+                await self.service.close_hard_stop(call["context"], exc)
+                raise
+            return self._step(state, role, active_role=role, phase="dag_executed", dag_revision=call["dag"].state.revision)
         handoff = build_role_handoff(self.service.store, req, call.get("previous_role_result"), role)
         req.retail_handoff = handoff
         call.setdefault("handoffs", []).append({key: handoff[key] for key in
@@ -187,7 +196,7 @@ class RetailWorkflow:
             return self._step(state, role, active_role=role, handoff=handoff, role_result=outcome, phase="role_executed")
         except Exception as ex:
             call["role_error"] = True
-            call["response"] = self.service.agent.fail_turn(ex, call["agent_started"])
+            call["response"] = self.service.agent.fail_turn(ex, call["agent_started"], req, call.get("responses", ()))
             return self._step(state, role, active_role=role, handoff=handoff, phase="role_failed")
         finally:
             call["business_ms"] += (time.perf_counter() - started) * 1000
@@ -196,7 +205,7 @@ class RetailWorkflow:
         call = self._call.get()
         if "dag" in call:
             role = call["dag"].next_role()
-            return self._step(state, "handoff_role", next_role=role or "compose_roles")
+            return self._step(state, "handoff_role", next_role=role or "compose_roles", dag_revision=call["dag"].state.revision)
         if call.get("role_error"):
             return self._step(state, "handoff_role", next_role="update_result", role_queue=[])
         req = call["context"]["request"]
@@ -236,7 +245,7 @@ class RetailWorkflow:
             return self._step(state, "compose_roles", phase="executed")
         except Exception as ex:
             call["role_error"] = True
-            call["response"] = agent.fail_turn(ex, call["agent_started"])
+            call["response"] = agent.fail_turn(ex, call["agent_started"], req, call.get("responses", ()))
             return self._step(state, "compose_roles", phase="role_failed")
         finally:
             call["business_ms"] += (time.perf_counter() - started) * 1000
@@ -349,45 +358,15 @@ class RetailWorkflow:
         from agents.retail_agent import RetailTurnResult
         call = self._call.get()
         store = self.service.store
-        if self._uses_roles() and (state.get("plan_id") or getattr(self.service.agent.orchestrator, "routing_mode", "") == "dag"):
-            from agents.agent_orchestrator import Request
-            executions = store.open_dags(call["user"], call["conv"])
-            if not executions or state.get("plan_id"):
-                terminal = store.unpublished_terminal(call["user"], call["conv"], store.current_turn(call["user"], call["conv"]),
-                                                      state.get("plan_id") or None)
-                if terminal:
-                    executions = [terminal]
-            for execution in executions:
-                if state.get("plan_id") and execution.plan.id != state["plan_id"]:
-                    continue
-                bound = store.bound_user_id(call["user"], call["conv"])
-                if execution.bound_user and bound != execution.bound_user:
-                    continue
-                req = Request(call["message"], call["user"], call["conv"], retail_store=store,
-                              retail_user_id=bound, turn=store.current_turn(call["user"],call["conv"]))
-                runner = DagRunner(self.service.agent.orchestrator, req, execution)
-                runner.reconcile()
-                outcome = runner.finish()
-                # Recovery may verify an existing event, but cannot prepare, redisplay an
-                # unacknowledged card, or submit an operation.
-                from agents.retail_response_guard import constrain_response
-                history = store.list_events(req.user_id, req.conv_id)
-                refs = {ref for run in execution.runs.values() for ref in run.refs}
-                receipts = [e for e in history if f"event:{e['event_id']}" in refs]
-                displayed = [p for p in store.active_pending(req.user_id, req.conv_id) if p["status"] == "displayed"]
-                checked = constrain_response(
-                    outcome.response, traces=self.service._order_evidence(req.user_id, req.conv_id, outcome.response,
-                                                                          bound, displayed),
-                    events=[], session_events=receipts, pending_before=displayed, pending_after=displayed,
-                    turn=req.turn, bound_user_id=bound, language=self.service.language, dag_post_write=req.dag_post_write,
-                )
-                call["result"] = RetailTurnResult(response=checked.text,
-                    success=bool(outcome.success and not checked.record.get("recovery_signature")),
-                    response_guard=checked.record,
-                    agent_type=AgentType.RETAIL, request_id=req.request_id, turn=req.turn, latency_ms=0,
-                    semantic_routing=req.retail_routing, orchestration_mode="dag")
-                return self._step(state, "recover_result", phase="reconciled", plan_id=execution.plan.id,
-                                  waiting_reason="", result={"success": call["result"].success})
+        if self._uses_roles() and (state.get("plan_id") or getattr(self.service.agent.orchestrator, "routing_mode", "") == "dag"
+                or store.recovery_dags(call["user"], call["conv"], state.get("turn", 0))):
+            result = self.service.recover_dag(call["user"], call["conv"], checkpoint=state)
+            call["result"] = result or self.service._recovery_failure(state.get("turn", 0))
+            result = call["result"]
+            dag = result.semantic_routing.get("dag", {})
+            return self._step(state, "recover_result", phase="reconciled", plan_id=dag.get("plan_id", ""),
+                              dag_revision=dag.get("revision", 0), waiting_reason="", pending_refs=[],
+                              result={"success": result.success})
         # 非等待点崩溃可能已完成写入：只读权威事件，不重跑 Agent 或工具。
         events = self.service.store.list_events(call["user"], call["conv"])
         known = [e for e in events if e["event_type"] == "return_requested"]
@@ -420,6 +399,19 @@ class RetailWorkflow:
                 has_interrupt = any(task.interrupts for task in snapshot.tasks)
                 resumed = snapshot.next == ("wait_user",) and has_interrupt and not unknown
                 recovering = (bool(snapshot.next) and not resumed) or unknown
+                # A crash can occur after SQLite publication but before the service returned.
+                current = self.service.store.current_turn(client_user_id, conv_id)
+                pending_close = self.service.store.dag_publication(client_user_id, conv_id, current) if self._uses_roles() else {}
+                recovery_state = snapshot.values
+                if (self._uses_roles() and not recovering and not pending_close and current
+                        and any(s.source for s in self.service.store.recovery_dags(client_user_id, conv_id, current))):
+                    # Another backend may have claimed this turn before writing any graph checkpoint.
+                    resumed, recovering = False, True
+                    recovery_state = {"turn": current}
+                if pending_close and not pending_close["dag_receipt"].get("finished"):
+                    if not recovering:
+                        recovery_state = {"turn": current, "plan_id": pending_close["dag_receipt"]["plan_id"]}
+                    resumed, recovering = False, True
                 if recovering:
                     # 结束未完成的调度位置，转只读核实；不执行其悬挂节点。
                     await self._graph.aupdate_state(config, {}, as_node="recover_result")
@@ -427,7 +419,9 @@ class RetailWorkflow:
                     "current_input": message, "phase": "recovering" if recovering else "input",
                     "node_path": [], "waiting_reason": "", "result": {}, "pending_refs": [],
                     **(self._reset_roles(call) if self._uses_roles() else {}),
-                    **({"plan_id": snapshot.values.get("plan_id", "")} if recovering else {}),
+                    **({"plan_id": recovery_state.get("plan_id", ""),
+                        "dag_revision": recovery_state.get("dag_revision", 0),
+                        "turn": recovery_state.get("turn", 0)} if recovering else {}),
                 }
                 output = await self._graph.ainvoke(value, config)
                 snapshot = await self._graph.aget_state(config)
@@ -444,13 +438,17 @@ class RetailWorkflow:
             if self._uses_roles():
                 result.workflow.update(active_role=output.get("active_role", ""),
                     handoffs=call.get("handoffs", []), role_handoff=output.get("handoff", {}))
-            self.service._record_trace(result, client_user_id, conv_id)
-            if "context" in call:
-                self.service._record_turn_event(**call["context"]["event"])
+            if recovering and result.orchestration_mode == "dag":
+                live_events.emit("recovery", "reconcile_turn", turn=result.turn, request_id=result.request_id,
+                                 turn_status=result.turn_status)
             else:
-                self.service._record_turn_event(result=result, message=message, client_user_id=client_user_id,
-                    conv_id=conv_id, bound_user_id=self.service.store.bound_user_id(client_user_id, conv_id),
-                    pending_before=call["pending_at_entry"], new_events=[], display_failed=[])
+                self.service._record_trace(result, client_user_id, conv_id)
+                if "context" in call:
+                    self.service._record_turn_event(**call["context"]["event"])
+                else:
+                    self.service._record_turn_event(result=result, message=message, client_user_id=client_user_id,
+                        conv_id=conv_id, bound_user_id=self.service.store.bound_user_id(client_user_id, conv_id),
+                        pending_before=call["pending_at_entry"], new_events=[], display_failed=[])
             return result
         finally:
             self._call.reset(token)

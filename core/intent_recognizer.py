@@ -568,6 +568,10 @@ class IntentRecognizer:
                     TurnRequestLimitExceeded,
                 )
 
+                from core.agent_context_budget import ContextLimit
+                if isinstance(ex, ContextLimit):
+                    ex.plan_attempts = list(attempts)
+                    raise
                 if isinstance(ex, (BudgetStopExceeded, TurnRequestLimitExceeded)) or (dag and isinstance(ex, BudgetExceeded)):
                     if dag:
                         ex.plan_status = "budget_stop" if isinstance(ex, BudgetExceeded) else "request_limit"

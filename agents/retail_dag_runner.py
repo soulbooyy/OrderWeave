@@ -4,16 +4,18 @@ import json
 import re
 import time
 
-from agents.agent_orchestrator import AgentType, OrchestratorResult, _stop_exception
+from agents.agent_orchestrator import AgentResponse, AgentType, OrchestratorResult, _stop_exception
 from agents.retail_dag_composer import compose_tasks
 from agents.retail_tools import TASK_TOOLS
+from core.agent_context_budget import ContextLimit
 from core.retail_dag import Status
+from evaluation.retail_budget import BudgetExceeded, TurnRequestLimitExceeded
 from core.intent_recognizer import IntentCategory
 from core.retail_dag_evidence import verify
 from core.retail_subtasks import OWNERS, PRIVATE, WRITES
 from core.dag_tool_log import JournalConflict, input_digest
 from core.dag_planning import target_outputs
-from core.task_context import choice_value, target_type, verified_entity
+from core.task_context import identifiers, choice_value, target_type, verified_entity
 from mcp_tools.retail_domain import WRITE_KINDS
 
 
@@ -77,6 +79,10 @@ class DagRunner:
                 continue
             waiting = next((r for r in state.runs.values() if r.status == Status.WAITING_USER), None)
             if not waiting:
+                if (state.stop in {"context_limit", "budget_stop", "request_limit"} and not state.operation
+                        and text.lower() in {"continue", "继续"}):
+                    state.stop = ""
+                    return driver
                 if not state.stop and text.lower() in {"continue", "继续"}:
                     return driver
                 continue
@@ -141,7 +147,7 @@ class DagRunner:
                 if (typ and scoped_choice
                         and not verified_entity(store, req.user_id, req.conv_id, typ, answer, req.retail_user_id)):
                     return driver
-                state.selected[waiting.task_id] = answer
+                driver.select_target(task, answer, req.turn, explicit=True)
             elif waiting.reason == "identity_required":
                 if req.retail_user_id and text.lower() not in {"continue", "继续"} and not re.fullmatch(
                         r"[^\s@]+@[^\s@]+\.[^\s@]+", text):
@@ -212,7 +218,7 @@ class DagRunner:
                     self.wait(task, "confirmation")
                 else:
                     # The user may never have seen the card. Retire it and require fresh preparation.
-                    store.cancel_dag_operation(req.user_id, req.conv_id, recorded)
+                    store.retire_unpublished_card(state, recorded)
                     if run.status == Status.RUNNING:
                         run.move(Status.FAILED, reason="interrupted_before_display")
                     state.stop = "interrupted_before_display"
@@ -221,7 +227,10 @@ class DagRunner:
         if batches:
             event_id = store.reconcile_tool_write(req.user_id, req.conv_id, state.plan.id, run,
                                                   state.target(task)[0], op, batches)
+        elif state.source:
+            event_id = store.dag_commit_event(state, task, state.target(task)[0], op)
         else:
+            # Older plans predate turn provenance and may lack an operation-to-task row.
             matched = next((e for e in store.list_events(req.user_id, req.conv_id)
                             if op and e["op_id"] == op["op_id"] and e["event_type"] == store.executed_event(op["kind"])
                             and e["payload"].get("args") == op["args"] and e["payload"].get("kind") == op["kind"]), None)
@@ -241,6 +250,8 @@ class DagRunner:
         self.save()
 
     def save(self):
+        if self.req.conversation_context and self.req.conversation_context.audience and self.state.source:
+            self.state.source["audience"] = self.req.conversation_context.audience
         self.state.record_attempts()
         if self.req.retail_store is not None:
             self.req.retail_store.save_dag(self.state)
@@ -253,6 +264,11 @@ class DagRunner:
             return ""
         return target_type(task.kind, task.output)
 
+    def select_target(self, task, value, turn, *, explicit=False):
+        self.state.selected[task.id] = value
+        self.state.selection_sources[task.id] = {"turn": turn, "bound": self.req.retail_user_id,
+                                                 "explicit": explicit}
+
     def resolve_reference(self, task, typ):
         req = self.req
         conversation = req.conversation_context
@@ -260,19 +276,34 @@ class DagRunner:
         candidates = conversation.candidates(typ, req.retail_user_id) if conversation else []
         if selected:
             explicit = choice_value(typ, req.message) == selected
-            if (selected in candidates or explicit) and verified_entity(
+            source = self.state.selection_sources.get(task.id)
+            # Old plans have no provenance. Require a fresh explicit selection.
+            witnessed = bool(source and conversation and source["bound"] == req.retail_user_id and any(
+                t["turn"] == source["turn"] and selected in identifiers(typ, t["user"] + " " + t["assistant"])
+                for t in conversation.recent))
+            if source and not conversation and source["bound"] == req.retail_user_id:
+                published = req.retail_store.dag_publication(req.user_id, req.conv_id, source["turn"])
+                witnessed = (published.get("dag_receipt", {}).get("bound") == req.retail_user_id and
+                             selected in identifiers(typ, published.get("user", "")))
+            if conversation and source and not source.get("explicit") and candidates != [selected]:
+                witnessed = False
+            conflicting = identifiers(typ, req.message) - {selected}
+            if not conflicting and (explicit or witnessed) and verified_entity(
                     req.retail_store, req.user_id, req.conv_id, typ, selected, req.retail_user_id):
                 return selected
             self.discard_selection(task)
         elif conversation and len(candidates) == 1 and candidates[0] == choice_value(
                 typ, conversation.proposals.get(task.id, "")):
-            self.state.selected[task.id] = candidates[0]
+            witness = next(t for t in reversed(conversation.recent)
+                           if candidates[0] in identifiers(typ, t["user"] + " " + t["assistant"]))
+            self.select_target(task, candidates[0], witness["turn"])
             return candidates[0]
         self.wait(task, "choose_target", candidates)
         return ""
 
     def discard_selection(self, task):
         self.state.selected.pop(task.id, None)
+        self.state.selection_sources.pop(task.id, None)
         if self.state.operation:
             req = self.req
             op_id = self.state.operation["op_id"]
@@ -281,6 +312,8 @@ class DagRunner:
             self.state.operation = {}
 
     def next_role(self):
+        if self.req.dag_source and self.state.source.get("turn") != self.req.turn:
+            self.state.source = self.req.dag_source.copy()
         while task := self.state.next_node(self.req.turn):
             run = self.state.runs[task.id]
             target, choices = self.state.target(task)
@@ -407,8 +440,21 @@ class DagRunner:
                          dag_ticket=(self.state.plan.id, task.id, self.state.revision, req.turn),
                          retail_handoff=None, dag_attempt=run.attempt,
                          transcript=req.transcript if req.dag_log_mode != "off" else None, spans=req.spans)
+        stop_reason = ""
+        hard_stop = None
         try:
             response = await actor.handle(scoped)
+        except ContextLimit as exc:
+            stop_reason = "context_limit"
+            response = AgentResponse.context_stopped(exc, req, actor.agent_type, self.router.language)
+        except (BudgetExceeded, TurnRequestLimitExceeded) as exc:
+            hard_stop = exc
+            stop_reason = "budget_stop" if isinstance(exc, BudgetExceeded) else "request_limit"
+            req.retail_routing["hard_stop"] = stop_reason
+            partial = getattr(exc, "partial", None)
+            response = AgentResponse(actor.agent_type, stop_reason, False,
+                                     tool_traces=partial.tool_traces if partial else [],
+                                     tools_used=partial.tools_used if partial else [])
         except JournalConflict:
             # Preserve the durable claim for evidence-only recovery.
             raise
@@ -427,7 +473,12 @@ class DagRunner:
         traces = response.tool_traces
         guard = req.retail_guard or {}
         store = req.retail_store
-        if guard.get("unknown_result"):
+        if (stop_reason and task.kind in WRITES and not self.state.operation and store
+                and self._prepared(task, traces, allow_stored=True)):
+            self.wait(task, "confirmation")
+        elif guard.get("unknown_result") and stop_reason and task.kind in WRITES and self.state.operation:
+            self.reconcile()
+        elif guard.get("unknown_result"):
             run.move(Status.BLOCKED, reason="unknown_result")
             self.state.stop = "unknown_result"
         elif guard.get("handoff"):
@@ -446,9 +497,29 @@ class DagRunner:
                     req.conversation_context.audience = [run.role, task.kind, target]
                 if task.kind in WRITES:
                     self.state.operation = {}
+            elif (stop_reason and task.kind in WRITES and self.state.operation and not traces
+                  and store and any(op["status"] == "displayed" and op["op_id"] == self.state.operation["op_id"]
+                                    for op in store.active_pending(req.user_id, req.conv_id))):
+                # Confirmation belongs to this real input. A later attempt needs a new one.
+                self.wait(task, "confirmation")
+            elif stop_reason and task.kind in WRITES and any(
+                    t["tool_name"] in WRITE_KINDS and not (t.get("not_executed") or t.get("blocked_by_guard")
+                    or t.get("skipped")) and t.get("result_success") is not False for t in traces):
+                run.move(Status.BLOCKED, reason="unknown_result")
+                self.state.stop = "unknown_result"
             else:
-                run.move(Status.FAILED, reason="missing_evidence")
+                run.move(Status.FAILED, reason=stop_reason or "missing_evidence")
+        if stop_reason and not self.state.stop:
+            self.state.stop = stop_reason
+            self.note = response.content
+        if stop_reason and self.state.source:
+            self.state.source["stop_reason"] = stop_reason
+            if stop_reason == "context_limit":
+                self.state.source["context_limit"] = req.retail_routing["context_limit"]
         self.save()
+        if hard_stop is not None:
+            hard_stop.dag_runner = self
+            raise hard_stop
 
     def accept_evidence(self, task, run, evidence):
         if task.output == "item_ids":
@@ -457,14 +528,14 @@ class DagRunner:
                     evidence.facts["item_ids"] = [v for v in evidence.facts["item_ids"] if v in dep["variants"]]
         run.move(Status.SUCCEEDED, facts=evidence.facts, refs=evidence.refs)
 
-    def _prepared(self, task, traces):
+    def _prepared(self, task, traces, *, allow_stored=False):
         req = self.req
         recorded = req.retail_store.prepared_for_task(self.state.plan.id, task.id, req.turn)
         ids = {(t.get("result") or {}).get("op_id") for t in traces
                if t.get("tool_name") in WRITE_KINDS and t.get("result_success")
                and (t.get("result") or {}).get("action_status") == "pending_confirmation"}
         for op in req.retail_store.active_pending(req.user_id, req.conv_id):
-            if op["op_id"] == recorded and recorded in ids and op["prepared_turn"] == req.turn:
+            if op["op_id"] == recorded and (allow_stored or recorded in ids) and op["prepared_turn"] == req.turn:
                 self.state.operation = {k: op[k] for k in ("op_id", "args", "kind")}
                 self.note = op["display_text"]
                 return True
@@ -472,11 +543,17 @@ class DagRunner:
 
     def finish(self):
         runs = list(self.state.runs.values())
-        self.req.retail_routing["dag"] = {"plan_id": self.state.plan.id, "stop": self.state.stop,
+        self.req.retail_routing["dag"] = {"plan_id": self.state.plan.id, "revision": self.state.revision, "stop": self.state.stop,
             "attempts": list(self.state.attempts),
             "tasks": [{"id": r.task_id, "role": r.role, "status": r.status.value,
                        "reason": r.reason, "refs": list(r.refs), "turn": r.turn} for r in runs]}
-        if self.state.stop == "choose_target":
+        if self.state.stop in {"budget_stop", "request_limit", "context_limit"}:
+            self.note = (f"Further processing stopped ({self.state.stop})." if self.router.language == "en"
+                         else f"后续处理已停止（{self.state.stop}）。")
+        elif self.state.stop == "interrupted_before_display":
+            self.note = ("Please request fresh confirmation details." if self.router.language == "en"
+                         else "上次详情未发布，请重新申请确认详情。")
+        elif self.state.stop == "choose_target":
             choices = next((r.facts.get("choices") for r in runs if r.status == Status.WAITING_USER), ())
             self.note = ("Please specify the target ID: " if self.router.language == "en" else "请指定目标编号：") + ", ".join(choices or ())
         elif self.state.stop == "identity_required":
@@ -491,22 +568,20 @@ class DagRunner:
                               if op["op_id"] == self.state.operation.get("op_id")), "")
         by_task = {}
         body = compose_tasks(self.state, self.router.language, "", by_task=by_task)
-        event = None
-        for attempt in self.state.attempts:
-            if attempt["turn"] != self.req.turn:
-                continue
-            key = attempt["id"]
-            run = self.state.runs[key]
-            if run.facts.get("executed") and run.refs:
-                event = run.refs[0]
-            elif event:
-                self.req.dag_post_write.setdefault(event, []).extend(by_task.get(key, ()))
+        events = [r.refs[0] for r in runs if r.turn == self.req.turn and r.facts.get("executed") and r.refs]
+        if events:
+            # The guard renders each write from its own event. Keep the other declared
+            # outputs and unfinished nodes once, attached to the last verified write.
+            self.req.dag_post_write[events[-1]] = [
+                line for task in self.state.plan.nodes if not self.state.runs[task.id].facts.get("executed")
+                for line in by_task.get(task.id, ())]
         if self.state.stop == "confirmation" and self.state.operation and body:
             self.req.dag_confirmation_basis = (self.state.operation["op_id"], body)
         content = "\n".join(filter(None, (body, self.note)))
         result = OrchestratorResult(
             request_id=self.req.request_id, intent=self.req.intent, agent_type=AgentType.RETAIL,
-            response=content, composer_output=content, success=self.state.complete,
+            response=content, composer_output=content,
+            success=self.state.complete and not self.req.retail_routing.get("hard_stop"),
             routing_reason="dag_tasks", agent_types=[r.agent_type for r in self.responses],
             tools_used=list(dict.fromkeys(t for r in self.responses for t in r.tools_used)),
             tool_traces=[t for r in self.responses for t in r.tool_traces],

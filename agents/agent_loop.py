@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from core.agent_context_budget import ContextLimit
 from core.dag_tool_log import ToolBatch
 from agents.tools import validate_tool_input
 from monitor import live_events
@@ -57,6 +58,10 @@ class LoopContext:
     agent: Any
     state: Dict[str, Any]
     spans: List[Dict[str, Any]] = field(default_factory=list)
+    visible_prefix: Optional[list] = None
+    raw_cursor: int = 0
+    remember_view: bool = False
+    projected_view: bool = False
 
 
 @dataclass
@@ -180,7 +185,11 @@ async def _run_tool_loop(
             _dump_request(request, agent_name)
             t0 = time.monotonic()
             resp = await agent._client.messages.create(**request)
+            if ctx.remember_view:
+                ctx.visible_prefix = deepcopy(request["messages"])
+                ctx.raw_cursor = len(messages)
             ctx.spans.append({"kind": "model", "agent": agent_name, "usage": _usage(resp),
+                              **({"local_projection": True} if ctx.projected_view else {}),
                               "request_chars": len(json.dumps([request["system"], request["messages"],
                                                                request.get("tools", [])],
                                                               ensure_ascii=False, default=str)),
@@ -316,10 +325,14 @@ async def _run_tool_loop(
                 if stop:
                     return result(stop)
         raise LoopError(f"{agent_name} 工具调用超过最大轮数", result(""))
+    except ContextLimit as ex:
+        ex.partial = result("")
+        raise
     except LoopError:
         raise
     except Exception as ex:
         if stop_check(req, ex):
+            ex.partial = result("")
             raise
         raise LoopError(str(ex), result("")) from ex
 

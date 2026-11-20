@@ -190,8 +190,10 @@ def test_confirm_after_restarting_service(tmp_path,monkeypatch,workflow,reply):
                 await service.workflow.close()
     if reply == "undisplayed":
         with monkeypatch.context() as patch:
-            patch.setattr(store, "mark_pending_displayed", lambda *args: False)
-            asyncio.run(turn(" ".join(r["quote"] for r in rows)))
+            from core.dag_tool_log import JournalConflict
+            patch.setattr(store, "_mark_displayed", lambda *args: False)
+            with pytest.raises(JournalConflict, match="confirmation card"):
+                asyncio.run(turn(" ".join(r["quote"] for r in rows)))
         assert store.active_pending("u", "c")[0]["status"] == "prepared"
         asyncio.run(turn("Yes, please proceed."))
         assert not store.active_pending("u", "c") and not store.open_dags("u", "c")

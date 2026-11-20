@@ -187,6 +187,10 @@ class RetailStoreError(RuntimeError):
     """种子、会话或数据库状态不允许继续。"""
 
 
+class DagRevisionConflict(RetailStoreError):
+    """Another worker advanced the same durable plan."""
+
+
 class SupportStateError(RetailStoreError):
     """独立支持记录读写失败；不得因此回放已完成的业务写入。"""
 
@@ -1103,10 +1107,155 @@ class RetailStore:
         self.finish_dialogue(client_user_id, conv_id, turn, message, reply, response_guard=response_guard,
                              catalog_steps=catalog_steps, return_basis=return_basis)
 
+    @staticmethod
+    def _visible_pair(con, client, conv, turn):
+        row = con.execute("SELECT payload_json FROM retail_dialogue WHERE client_user_id=? AND conv_id=?",
+                          (client, conv)).fetchone()
+        return next((p for p in json.loads(row[0]) if p["turn"] == turn), {}) if row else {}
+
+    def dag_publication(self, client, conv, turn):
+        with closing(self._connect()) as con:
+            pair = self._visible_pair(con, client, conv, turn)
+        return pair if pair.get("dag_receipt") else {}
+
+    def _check_publication_scope(self, con, client, conv, turn, receipt, message):
+        from core.retail_scheduler import Execution
+        from core.retail_subtasks import PRIVATE, WRITES
+
+        claim = con.execute("SELECT d.payload FROM dag_executions d JOIN sessions s ON "
+                            "s.client_user_id=d.client AND s.conv_id=d.conversation WHERE d.plan_id=? "
+                            "AND d.revision=? AND d.client=? AND d.conversation=? AND s.turn_count=? "
+                            "AND s.retail_user_id IS ?",
+                            (receipt["plan_id"], receipt["revision"], client, conv, turn, receipt["bound"])).fetchone()
+        if not claim:
+            raise JournalConflict("stale DAG publication")
+        state = Execution.load(json.loads(claim[0]))
+        source = state.source
+        if ((state.bound_user or None) != receipt["bound"] or source and
+                (source["turn"], source["message"], source["request_id"]) != (turn, message, receipt["request_id"])):
+            raise JournalConflict("DAG turn source changed")
+        for task in state.plan.nodes:
+            run = state.runs[task.id]
+            if task.kind not in PRIVATE or run.status.value not in {"succeeded", "waiting_user", "running"}:
+                continue
+            target = state.target(task)[0]
+            if target and target.startswith("#") and run.reason != "identity_required" and not con.execute(
+                    "SELECT 1 FROM orders WHERE order_id=? AND user_id=?", (target, receipt["bound"])).fetchone():
+                raise JournalConflict("DAG order ownership changed")
+            if task.kind in WRITES and run.status.value == "succeeded":
+                events = self._dag_commit_events(con, state, task, run.facts.get("op_id"), target)
+                if not any(f"event:{event_id}" in run.refs for event_id in events):
+                    raise JournalConflict("DAG commit evidence changed")
+
+    def _dag_commit_events(self, con, state, task, op_id, target, operation=None):
+        plan = state.plan
+        proof = con.execute(
+            "SELECT e.event_id,e.event_type,e.payload_json,a.kind,a.args_json,a.order_id FROM action_operations a "
+            "JOIN retail_events e ON e.op_id=a.op_id AND e.client_user_id=a.client_user_id "
+            "AND e.conv_id=a.conv_id AND e.retail_user_id=a.retail_user_id AND e.order_id IS a.order_id "
+            "JOIN dag_operations d ON d.op_id=a.op_id WHERE a.client_user_id=? AND a.conv_id=? "
+            "AND a.retail_user_id=? AND d.plan_id=? AND d.task_id=? AND a.op_id=?",
+            (plan.client, plan.conversation, state.bound_user, plan.id, task.id, op_id))
+        matches = []
+        for event_id, event_type, raw, kind, raw_args, order_id in proof:
+            payload, args = json.loads(raw), json.loads(raw_args)
+            if (event_type == self.executed_event(kind) and payload.get("kind") == kind
+                    and payload.get("args") == args and (order_id or state.bound_user) == target
+                    and (not operation or (kind, args) == (operation["kind"], operation["args"]))):
+                matches.append(event_id)
+        return matches
+
+    def dag_commit_event(self, state, task, target, operation):
+        if operation:
+            with closing(self._connect()) as con:
+                matches = self._dag_commit_events(con, state, task, operation["op_id"], target, operation)
+            if len(matches) == 1:
+                return matches[0]
+
+    def verify_legacy_publication(self, state, turn, bound, text):
+        """Check a pre-receipt reply against its scoped host snapshot and recomposed text."""
+        from core.task_context import published_reply, user_snapshot
+
+        client, conv = state.plan.client, state.plan.conversation
+        with self._tx() as con:
+            pair = self._visible_pair(con, client, conv, turn)
+            raw = con.execute("SELECT seq,kind,role,agent,content_json FROM conversation_log WHERE "
+                              "client_user_id=? AND conv_id=? AND turn=? AND kind IN ('user','assistant')",
+                              (client, conv, turn))
+            rows = [dict(r, content=json.loads(r["content_json"])) for r in raw]
+            snapshot = user_snapshot(rows, turn)
+            if not snapshot:
+                return False
+            seq, message, host = snapshot
+            if (host["bound_user_id"] != bound or host.get("final_bound_user_id", bound) != bound
+                    or (bound is None and "final_bound_user_id" not in host)
+                    or pair.get("assistant") != text[:2000] or pair.get("user") != message[:2000]
+                    or published_reply(rows, seq) != text):
+                return False
+            try:
+                self._check_publication_scope(con, client, conv, turn, {
+                    "plan_id": state.plan.id, "revision": state.revision, "bound": bound}, message)
+            except JournalConflict:
+                return False
+            return True
+
+    def repair_dag_log(self, client, conv, turn, pair, rows):
+        """Reuse the guarded publication under the same claim, appending only missing public rows."""
+        with self._tx() as con:
+            stored = self._visible_pair(con, client, conv, turn)
+            if not stored or (stored["user"], stored["assistant"], stored.get("dag_receipt", {}).get("request_id")) != (
+                    pair["user"], pair["assistant"], pair["dag_receipt"]["request_id"]):
+                raise JournalConflict("published reply changed during recovery")
+            self._check_publication_scope(con, client, conv, turn, stored["dag_receipt"], stored["user"])
+            if rows is not None:
+                self._save_messages(con, client, conv, turn, rows, True,
+                                    public_seq=stored["dag_receipt"].get("public_seq"))
+
+    def acknowledge_dag(self, client, conv, turn, request_id):
+        """The service finished this call. This is not a network delivery acknowledgement."""
+        with self._tx() as con:
+            row = con.execute("SELECT payload_json FROM retail_dialogue WHERE client_user_id=? AND conv_id=?",
+                              (client, conv)).fetchone()
+            pairs = json.loads(row[0]) if row else []
+            for pair in pairs:
+                receipt = pair.get("dag_receipt", {})
+                if pair["turn"] == turn and receipt.get("request_id") == request_id and not receipt.get("finished"):
+                    receipt["finished"] = True
+                    con.execute("UPDATE retail_dialogue SET payload_json=? WHERE client_user_id=? AND conv_id=?",
+                                (json.dumps(pairs, ensure_ascii=False), client, conv))
+                    return
+
+    def recovery_dags(self, client, conv, turn, plan_id=None):
+        """Include inactive plans. An old checkpoint must identify one original turn unambiguously."""
+        from core.retail_scheduler import Execution
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                "SELECT payload FROM dag_executions WHERE client=? AND conversation=? AND (? IS NULL OR plan_id=?) "
+                "AND (json_extract(payload,'$.source.turn')=? OR (json_extract(payload,'$.source.turn') IS NULL "
+                "AND EXISTS (SELECT 1 FROM json_each(payload,'$.runs') WHERE json_extract(value,'$.turn')=?)))",
+                (client, conv, plan_id, plan_id, turn, turn)).fetchall()
+        return [Execution.load(json.loads(r[0])) for r in rows]
+
     def finish_dialogue(self, client, conv, turn, message, reply, *, rows=None, response_guard=None,
-                        catalog_steps=None, return_basis=None):
+                        catalog_steps=None, return_basis=None, dag_receipt=None, displays=()):
         """Atomically publish guarded dialogue and close any previously opened journal."""
         with self._tx() as con:
+            pair = self._visible_pair(con, client, conv, turn)
+            if pair.get("dag_receipt"):
+                receipt = pair["dag_receipt"]
+                if ((pair["user"], pair["assistant"]) != (message, reply) or
+                        (dag_receipt and any(receipt[k] != dag_receipt[k] for k in
+                                             ("plan_id", "revision", "bound", "request_id")))):
+                    raise JournalConflict("conflicting DAG publication")
+                return
+            if dag_receipt:
+                self._check_publication_scope(con, client, conv, turn, dag_receipt, message)
+                for op_id, appended in displays:
+                    card = con.execute("SELECT display_text FROM pending_actions WHERE op_id=? AND retail_user_id IS ?",
+                                       (op_id, dag_receipt["bound"])).fetchone()
+                    if (not card or not card[0] or card[0] not in reply or not self._mark_displayed(
+                            con, client, conv, op_id, turn, appended)):
+                        raise JournalConflict("confirmation card changed before publication")
             journal = self._has_journal(con, client, conv, turn)
             if journal:
                 previous = con.execute("SELECT payload_json FROM retail_dialogue WHERE client_user_id=? AND conv_id=?",
@@ -1126,12 +1275,16 @@ class RetailStore:
                     if public != [("user", message), ("assistant", reply)]:
                         raise JournalConflict("guarded reply and journal close disagree")
                 self._save_messages(con, client, conv, turn, rows, journal)
+            if dag_receipt and rows is not None:
+                dag_receipt = {**dag_receipt, "public_seq": dict(con.execute(
+                    "SELECT kind,seq FROM conversation_log WHERE client_user_id=? AND conv_id=? AND turn=? "
+                    "AND kind IN ('user','assistant')", (client, conv, turn)).fetchall())}
             if published is None:
-                self._save_visible(con, client, conv, turn, message, reply, response_guard, catalog_steps, return_basis)
+                self._save_visible(con, client, conv, turn, message, reply, response_guard, catalog_steps, return_basis, dag_receipt)
 
     @staticmethod
     def _save_visible(connection, client_user_id, conv_id, turn, message, reply, response_guard,
-                      catalog_steps, return_basis):
+                      catalog_steps, return_basis, dag_receipt=None):
         row = connection.execute("SELECT payload_json FROM retail_dialogue WHERE client_user_id=? AND conv_id=?",
             (client_user_id, conv_id)).fetchone()
         pairs = json.loads(row["payload_json"]) if row else []
@@ -1139,6 +1292,8 @@ class RetailStore:
         pairs.append({"turn": turn, "user": message[:2000], "assistant": reply[:2000],
                       "response_guard": {key: response_guard[key] for key in ("recovery_signature", "recovery_count")
                                          if response_guard and key in response_guard}})
+        if dag_receipt:
+            pairs[-1].update(user=message, assistant=reply, dag_receipt=dag_receipt, response_guard=response_guard)
         if catalog_steps:
             pairs[-1]["catalog_steps"] = catalog_steps
         if return_basis:
@@ -1150,6 +1305,14 @@ class RetailStore:
     def save_turn_messages(self, client_user_id: str, conv_id: str, turn: int,
                            rows: List[Dict[str, Any]]) -> None:
         with self._tx() as con:
+            published = self._visible_pair(con, client_user_id, conv_id, turn)
+            if published.get("dag_receipt"):
+                public = [(r["kind"], self._public_text(r["kind"], r["content"])) for r in rows
+                          if r["kind"] in {"user", "assistant"}]
+                if public != [("user", published["user"]), ("assistant", published["assistant"])]:
+                    raise JournalConflict("conflicting DAG dialogue repair")
+                self._save_messages(con, client_user_id, conv_id, turn, rows, True)
+                return
             self._save_messages(con, client_user_id, conv_id, turn, rows,
                                 self._has_journal(con, client_user_id, conv_id, turn))
 
@@ -1175,7 +1338,7 @@ class RetailStore:
             raise JournalConflict("invalid public dialogue block")
         return blocks[pos]["text"]
 
-    def _save_messages(self, con, client, conv, turn, rows, journal):
+    def _save_messages(self, con, client, conv, turn, rows, journal, *, public_seq=None):
         if journal:
             # M may be retried after a previous atomic close. Compare its submitted originals as well.
             incoming = [r for r in rows if r["kind"] == KIND]
@@ -1193,7 +1356,19 @@ class RetailStore:
                 row = published.pop(kind, None)
                 if row is None or self._public_text(kind, json.loads(content)) != self._public_text(kind, row["content"]):
                     raise JournalConflict("conflicting published turn")
-            self._append_rows(con, client, conv, turn, [published[k] for k in ("user", "assistant") if k in published])
+            missing = [published[k] for k in ("user", "assistant") if k in published]
+            if public_seq:
+                for row in missing:
+                    seq = public_seq[row["kind"]]
+                    collision = con.execute("SELECT 1 FROM conversation_log WHERE client_user_id=? AND conv_id=? AND seq=?",
+                                            (client, conv, seq)).fetchone()
+                    if collision:
+                        raise JournalConflict("original publication position occupied")
+                    con.execute("INSERT INTO conversation_log VALUES (?,?,?,?,?,?,?,?,?)",
+                                (client, conv, seq, turn, row["role"], row["kind"], None,
+                                 json.dumps(row["content"], ensure_ascii=False), _now()))
+            else:
+                self._append_rows(con, client, conv, turn, missing)
         else:
             con.execute("DELETE FROM conversation_log WHERE client_user_id=? AND conv_id=? AND turn=?",
                         (client, conv, turn))
@@ -1898,7 +2073,9 @@ class RetailStore:
     def save_dag(self, state):
         plan = state.plan
         revision = state.revision + 1
-        active = bool(state.stop in {"identity_required", "choose_target", "confirmation", "unknown_result"}
+        resumable = state.stop in {"context_limit", "budget_stop", "request_limit"} and any(
+            r.status.value in {"pending", "ready"} for r in state.runs.values())
+        active = bool(resumable or state.stop in {"identity_required", "choose_target", "confirmation", "unknown_result"}
                       or (not state.stop and any(r.status.value in {"pending", "ready", "running"}
                                                  for r in state.runs.values())))
         payload = json.dumps({**state.dump(), "revision": revision}, ensure_ascii=False)
@@ -1912,7 +2089,7 @@ class RetailStore:
                     "WHERE plan_id=? AND revision=? AND client=? AND conversation=?",
                     (revision,active,payload,plan.id,state.revision,plan.client,plan.conversation))
                 if changed.rowcount != 1:
-                    raise RetailStoreError("concurrent DAG update")
+                    raise DagRevisionConflict("concurrent DAG update")
         state.revision = revision
 
     def open_dags(self, client, conversation):
@@ -1922,6 +2099,21 @@ class RetailStore:
                                       "client=? AND conversation=? AND active=1 ORDER BY rowid DESC",
                                       (client,conversation)).fetchall()
         return [Execution.load(json.loads(row[0])) for row in rows]
+
+    def retire_unpublished_card(self, state, op_id):
+        """Only retire a still-prepared card while holding its original DAG revision."""
+        plan = state.plan
+        with self._tx() as con:
+            retired = con.execute(
+                "UPDATE pending_actions SET status='cancelled',note='interrupted_before_display' WHERE "
+                "client_user_id=? AND conv_id=? AND retail_user_id=? AND op_id=? AND status='prepared' "
+                "AND EXISTS (SELECT 1 FROM dag_executions WHERE plan_id=? AND revision=? AND client=? "
+                "AND conversation=?) AND EXISTS (SELECT 1 FROM sessions WHERE client_user_id=? AND conv_id=? "
+                "AND retail_user_id=?)",
+                (plan.client, plan.conversation, state.bound_user, op_id, plan.id, state.revision, plan.client,
+                 plan.conversation, plan.client, plan.conversation, state.bound_user))
+            if not retired.rowcount:
+                raise DagRevisionConflict("confirmation card no longer owned by this recovery")
 
     def cancel_dag_operation(self, client, conversation, op_id):
         with self._tx() as connection:
@@ -1973,19 +2165,22 @@ class RetailStore:
     def mark_pending_displayed(self, client_user_id: str, conv_id: str, op_id: str, turn: int,
                                appended: bool) -> bool:
         with self._tx() as connection:
-            row = connection.execute("SELECT * FROM pending_actions WHERE op_id=?", (op_id,)).fetchone()
-            if (row is None or row["client_user_id"] != client_user_id or row["conv_id"] != conv_id
-                    or row["status"] != "prepared" or int(row["prepared_turn"]) != int(turn)):
-                return False
-            connection.execute(
-                "UPDATE pending_actions SET status='displayed', displayed_turn=?, display_appended=?,"
-                " updated_at=? WHERE op_id=? AND status='prepared'",
-                (turn, 1 if appended else 0, _now(), op_id))
-            self._event(connection, client_user_id, conv_id, str(row["retail_user_id"]),
-                        f"{self._EVENT_PREFIX[row['kind']]}_displayed",
-                        {"appended": bool(appended), "turn": int(turn)},
-                        order_id=row["order_id"], op_id=op_id)
-            return True
+            return self._mark_displayed(connection, client_user_id, conv_id, op_id, turn, appended)
+
+    def _mark_displayed(self, connection, client_user_id, conv_id, op_id, turn, appended):
+        row = connection.execute("SELECT * FROM pending_actions WHERE op_id=?", (op_id,)).fetchone()
+        if (row is None or row["client_user_id"] != client_user_id or row["conv_id"] != conv_id
+                or row["status"] != "prepared" or int(row["prepared_turn"]) != int(turn)):
+            return False
+        connection.execute(
+            "UPDATE pending_actions SET status='displayed', displayed_turn=?, display_appended=?,"
+            " updated_at=? WHERE op_id=? AND status='prepared'",
+            (turn, 1 if appended else 0, _now(), op_id))
+        self._event(connection, client_user_id, conv_id, str(row["retail_user_id"]),
+                    f"{self._EVENT_PREFIX[row['kind']]}_displayed",
+                    {"appended": bool(appended), "turn": int(turn)},
+                    order_id=row["order_id"], op_id=op_id)
+        return True
 
     def record_confirmation_decisions(self, client_user_id: str, conv_id: str, turn: int,
                                       decisions: List[Dict[str, Any]], source: str) -> None:

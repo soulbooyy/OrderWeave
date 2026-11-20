@@ -247,7 +247,7 @@ class ContextEngine:
     def calibrate(self, client: str, conv: str, spans: List[Dict[str, Any]]) -> None:
         """用本轮实际 usage 校准字符／token 换算（指数平滑）。"""
         pairs = [(s["request_chars"], sum((s.get("usage") or {}).get(k, 0) for k in ("input", "cache_read", "cache_write")))
-                 for s in spans if s.get("kind") == "model" and s.get("request_chars")]
+                 for s in spans if s.get("kind") == "model" and s.get("request_chars") and not s.get("local_projection")]
         pairs = [(c, t) for c, t in pairs if t > 0]
         if not pairs:
             return

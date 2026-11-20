@@ -42,6 +42,7 @@ from core.task_context import DEFAULT_RECENT_TURNS
 from core.intent_recognizer import IntentRecognizer
 from core.retail_subtasks import DEFAULT_RETAIL_ROUTING_MODE
 from core.skill_loader import SkillManager
+from core.agent_context_budget import ModelRequestBudgetGuard
 from evaluation.retail_ledger import (
     BudgetedClient,
     RetailLedger,
@@ -443,6 +444,7 @@ class RetailRuntimeConfig:
     dag_log_mode: str = "off"
     conversation_context_enabled: bool = False
     recent_conversation_turns: int = DEFAULT_RECENT_TURNS
+    model_context_mode: str = "off"
 
     @classmethod
     def from_env(cls) -> "RetailRuntimeConfig":
@@ -565,6 +567,7 @@ class RetailRuntimeConfig:
             checkpoint_path=_env_optional_path("RETAIL_CHECKPOINT_PATH"),
             semantic_routing=_env_bool("RETAIL_SEMANTIC_ROUTING", True),
             semantic_model_path=_env_optional_path("RETAIL_SEMANTIC_MODEL_PATH"),
+            model_context_mode=_env_text("RETAIL_MODEL_CONTEXT_MODE", "off").lower(),
             model_thinking=_env_text("RETAIL_MODEL_THINKING").lower(),
             dag_log_mode=_env_text("RETAIL_DAG_TOOL_LOG", "off").lower(),
             conversation_context_enabled=_env_bool("RETAIL_CONVERSATION_CONTEXT_ENABLED", False),
@@ -716,6 +719,7 @@ class RetailRuntime:
 
 def build_retail_runtime(
     config: Optional[RetailRuntimeConfig] = None,
+    *, context_guard: Optional[ModelRequestBudgetGuard] = None,
 ) -> RetailRuntime:
     """按环境配置构造零售运行时；不会自动重置已有业务库。"""
     config = config or RetailRuntimeConfig.from_env()
@@ -736,14 +740,14 @@ def build_retail_runtime(
         raise ValueError("实验覆盖策略需要本地Qwen重排")
     encoder = QwenEmbeddingFunction() if config.enable_knowledge and config.embedding_model == "qwen" else None
     try:
-        return _build_retail_runtime(config, encoder)
+        return _build_retail_runtime(config, encoder, context_guard)
     except Exception:
         if encoder is not None:
             encoder.close()
         raise
 
 
-def _build_retail_runtime(config: RetailRuntimeConfig, encoder) -> RetailRuntime:
+def _build_retail_runtime(config: RetailRuntimeConfig, encoder, context_guard=None) -> RetailRuntime:
 
     if config.support_enabled:
         if str(config.language).lower() != "zh":
@@ -819,6 +823,7 @@ def _build_retail_runtime(config: RetailRuntimeConfig, encoder) -> RetailRuntime
         base_url=config.base_url or None,
         ledger=ledger,
         stage="agent",
+        context_guard=context_guard or ModelRequestBudgetGuard.for_endpoint(config.model_context_mode, config.base_url),
         thinking={"type": config.model_thinking} if config.model_thinking in {"enabled", "disabled"} else None,
     )
 

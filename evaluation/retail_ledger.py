@@ -18,6 +18,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+from core.agent_context_budget import ModelRequestBudgetGuard
 from monitor import live_events
 from evaluation.retail_budget import (
     INPUT_COUNT_BASIS,
@@ -619,19 +620,30 @@ class _BudgetedMessages:
         stage: str,
         count_turn: bool = False,
         thinking: Optional[Dict[str, Any]] = None,
+        context_guard: Optional[ModelRequestBudgetGuard] = None,
     ):
         self._inner = inner
         self._ledger = ledger
         self._stage = stage
         self._count_turn = count_turn
         self._thinking = thinking
+        self.context_guard = context_guard or ModelRequestBudgetGuard()
 
-    async def create(self, **kwargs: Any) -> Any:
+    @property
+    def stage(self):
+        return self._stage
+
+    def final_kwargs(self, kwargs):
         # 统一的思考设置在预留前写入请求，账本按实际发送内容计费；调用方显式设置时不覆盖。
         if self._thinking is not None:
             extra = dict(kwargs.get("extra_body") or {})
             extra.setdefault("thinking", self._thinking)
-            kwargs["extra_body"] = extra
+            kwargs = {**kwargs, "extra_body": extra}
+        return kwargs
+
+    async def create(self, **kwargs: Any) -> Any:
+        kwargs = self.final_kwargs(kwargs)
+        decision = self.context_guard.final(self._stage, kwargs)
         # 先检查单轮请求上限，再预留费用；被拒绝时不发出请求。
         if self._count_turn:
             self._ledger.consume_turn_request(self._stage)
@@ -652,6 +664,7 @@ class _BudgetedMessages:
                 getattr(response, "usage", None),
                 (time.monotonic() - started) * 1000,
             )
+            self.context_guard.usage(self._stage, decision, getattr(response, "usage", None))
             if live.id is not None:
                 input_main, output, cache_read, cache_write = self._ledger._usage_values(
                     getattr(response, "usage", None))
@@ -673,6 +686,7 @@ class BudgetedClient:
         stage: str,
         count_turn: bool = False,
         thinking: Optional[Dict[str, Any]] = None,
+        context_guard: Optional[ModelRequestBudgetGuard] = None,
     ):
         self._inner = inner
         self._ledger = ledger
@@ -680,7 +694,7 @@ class BudgetedClient:
         self.count_turn = count_turn
         self.thinking = thinking
         self.messages = _BudgetedMessages(
-            inner.messages, ledger, stage, count_turn=count_turn, thinking=thinking
+            inner.messages, ledger, stage, count_turn=count_turn, thinking=thinking, context_guard=context_guard
         )
 
     def for_stage(
@@ -693,6 +707,7 @@ class BudgetedClient:
             stage,
             count_turn=self.count_turn if count_turn is None else count_turn,
             thinking=self.thinking,
+            context_guard=self.messages.context_guard,
         )
 
     async def aclose(self) -> None:
@@ -712,6 +727,7 @@ def build_budgeted_client(
     stage: str,
     count_turn: bool = False,
     thinking: Optional[Dict[str, Any]] = None,
+    context_guard: Optional[ModelRequestBudgetGuard] = None,
 ) -> BudgetedClient:
     """创建禁用 SDK 隐式重试的真实客户端；thinking 为供应商扩展参数，统一下发到所有阶段。"""
     from anthropic import AsyncAnthropic
@@ -720,5 +736,5 @@ def build_budgeted_client(
     if base_url:
         kwargs["base_url"] = base_url
     return BudgetedClient(
-        AsyncAnthropic(**kwargs), ledger, stage, count_turn=count_turn, thinking=thinking
+        AsyncAnthropic(**kwargs), ledger, stage, count_turn=count_turn, thinking=thinking, context_guard=context_guard
     )

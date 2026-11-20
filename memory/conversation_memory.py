@@ -20,6 +20,7 @@ import redis.asyncio as redis
 from anthropic import AsyncAnthropic
 from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 
+from core.agent_context_budget import ContextLimit
 from core.llm_utils import extract_text_content
 
 logger = logging.getLogger(__name__)
@@ -166,6 +167,7 @@ class MemoryManager:
         role: MsgRole,
         content: str,
         metadata: Optional[Dict[str, Any]] = None,
+        *, compress: bool = True,
     ) -> None:
         """在持有会话锁的情况下追加消息并按需压缩。"""
         user_id = self._safe_text(user_id)
@@ -195,7 +197,7 @@ class MemoryManager:
             )
             await self._redis.expire(key, 86400)
 
-            if await self._redis.llen(key) >= self.COMPRESS_AT:
+            if compress and await self._redis.llen(key) >= self.COMPRESS_AT:
                 await self._compress_locked(user_id, conv_id)
 
     async def update_profile(self, user_id: str, conv_id: str) -> None:
@@ -338,7 +340,10 @@ class MemoryManager:
 
         summary_key = self._summary_key(user_id, conv_id)
         old_summary = await self._redis.get(summary_key) or ""
-        new_summary = await self._merge_summary(old_summary, summary)
+        try:
+            new_summary = await self._merge_summary(old_summary, summary)
+        except ContextLimit:
+            return  # Keep both the original summary and the working messages.
 
         stored = await self._store_episodic(user_id, conv_id, text, summary)
         if stored is False:
@@ -590,6 +595,8 @@ class MemoryManager:
             merged = self._safe_text(extract_text_content(resp.content)).strip()
             if merged:
                 return merged[: self.SUMMARY_MAX_CHARS]
+        except ContextLimit:
+            raise
         except Exception as ex:
             logger.warning(f"合并摘要失败，回退为截断拼接: {ex}")
 

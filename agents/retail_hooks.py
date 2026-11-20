@@ -5,7 +5,15 @@
 """
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
+import json
 from typing import Optional
+
+from core.agent_context_budget import ContextLimit, valid_tool_protocol
+from core.retail_dag import Node
+from core.retail_dag_evidence import verify
+from core.retail_subtasks import WRITES
 
 from agents.agent_loop import LoopHook
 from agents.retail_tools import RETAIL_STATE_TOOLS, RETAIL_WRITE_TOOLS, is_execution_attempt
@@ -197,17 +205,184 @@ class PublishCheckHook(LoopHook):
                 f"{problems}\nRewrite the complete reply to the customer, fixing only these points.")
 
 
+class AgentContextBudgetHook(LoopHook):
+    """One instance per role loop. Only a successful send publishes its private prefix."""
+
+    name = "agent_context_budget"
+
+    def pre_model(self, ctx, request):
+        transport = ctx.agent._client.messages
+        guard = getattr(transport, "context_guard", None)
+        if guard is None or guard.mode == "off":
+            return
+        raw = request["messages"]
+        view = ctx.visible_prefix + raw[ctx.raw_cursor:] if ctx.visible_prefix is not None else raw
+        kwargs = transport.final_kwargs(request)
+
+        def measure(messages):
+            return guard.measure({**kwargs, "messages": messages})
+
+        before = current = measure(view)
+        actions = []
+        if not valid_tool_protocol(view):
+            current = replace(current, reason="invalid_tool_protocol")
+        elif current.reason == "window_exceeded" and getattr(ctx.req, "dag_assignment", None):
+            view = deepcopy(view)
+            allowed = {tool["name"] for tool in request.get("tools", [])}
+            for action in self._reductions(ctx, view, allowed):
+                actions.append(action)
+                current = measure(view)
+                if current.reason != "window_exceeded":
+                    break
+        event = guard.decision(transport.stage, current, "role", before=before, actions=actions,
+                               details=self._scope_metrics(ctx.req, view))
+        ctx.spans.append(event)
+        if guard.mode == "enforce":
+            if current.reason:
+                raise ContextLimit(event)
+            if actions or ctx.visible_prefix is not None:
+                request["messages"] = view
+            ctx.remember_view = True
+            ctx.projected_view = ctx.projected_view or bool(actions)
+
+    @staticmethod
+    def _scope_metrics(req, view):
+        """UTF-8 sizes give attribution. Only the complete request determines the token limit."""
+        assignment = getattr(req, "dag_assignment", None)
+        if not assignment or not view or not all(isinstance(m, dict) for m in view):
+            return {}
+        def size(value):
+            return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
+
+        metrics = {"task": size({k: v for k, v in assignment.items() if k not in {"inputs", "input_refs"}}),
+                   "dependencies": size([assignment.get("inputs", {}), assignment.get("input_refs", {})]),
+                   "tool_exchanges": sum(size(c) + size(r) for c, r, _ in _read_pairs(view))}
+        background = _background(req, view)
+        if background:
+            metrics["recent_conversation"] = size(background.get("recent_conversation", []))
+            metrics["persistent_summary"] = size(background.get("history_summary", ""))
+        ticket = getattr(req, "dag_ticket", None)
+        return dict(component_bytes=metrics, plan_id=ticket[0] if ticket else None,
+                    task_id=assignment.get("id"), attempt=getattr(req, "dag_attempt", None))
+
+    @staticmethod
+    def _reductions(ctx, view, tool_names):
+        req = ctx.req
+        assignment = req.dag_assignment
+        if assignment["kind"] in WRITES:
+            return
+        background = _background(req, view)
+        if background and not req.retail_pending:
+            block = view[0]["content"][0]
+            if background.pop("history_summary", None):
+                background["omitted"] = True
+                block["text"] = json.dumps(background, ensure_ascii=False)
+                yield "omit_summary"
+            turns = background.get("recent_conversation", [])
+            while turns:
+                turns.pop(0)
+                background["omitted"] = True
+                block["text"] = json.dumps(background, ensure_ascii=False)
+                yield "omit_oldest_turn"
+        if not assignment.get("output"):
+            return
+        node = Node(assignment["id"], assignment["kind"], assignment["quote"], (),
+                    assignment["output"], assignment["target"], None)
+        allowed = tool_names.intersection(req.dag_tool_limit or (), _PROJECTABLE_READS)
+        reads = [(call, block, current) for call, block, current in _read_pairs(view) if call["name"] in allowed]
+        for call, block, _ in reads:
+            projection = _verified_projection(node, call, block, req.retail_user_id)
+            if projection and _shorten(block, projection):
+                yield "project_read_result"
+        if len(reads) > 1 and req.dag_log_mode == "j":
+            yield from _reference_duplicates(ctx, node, reads, allowed)
+
+
+_PROJECTABLE_READS = {"get_order_details", "get_product_details", "get_item_details", "search_knowledge_base"}
+
+
+def _background(req, view):
+    # Only block zero of a host-compiled Phase 1 task packet has this provenance.
+    blocks = view[0].get("content") if view and isinstance(view[0], dict) else None
+    if not (getattr(req, "conversation_context", None) and isinstance(blocks, list) and len(blocks) == 2
+            and isinstance(blocks[0], dict) and blocks[0].get("type") == "text"):
+        return None
+    try:
+        data = json.loads(blocks[0]["text"])
+    except (KeyError, ValueError, TypeError):
+        return None
+    if (isinstance(data, dict) and set(data) <= {"recent_conversation", "history_summary", "omitted"}
+            and isinstance(data.get("recent_conversation", []), list)):
+        return data
+
+
+def _read_pairs(view):
+    for assistant, user in zip(view, view[1:]):
+        if assistant.get("role") != "assistant" or user.get("role") != "user":
+            continue
+        uses, results = assistant.get("content"), user.get("content")
+        if isinstance(uses, list) and isinstance(results, list):
+            calls = [b for b in uses if isinstance(b, dict) and b.get("type") == "tool_use"]
+            for call, result in zip(calls, results):
+                if isinstance(result, dict) and result.get("tool_use_id") == call.get("id"):
+                    yield call, result, user is view[-1]
+
+
+def _verified_projection(node, call, block, bound):
+    try:
+        trace = dict(tool_use_id=call["id"], tool_name=call["name"], input=call["input"],
+                     result_success=True, result=json.loads(block["content"]))
+        evidence = verify(node, [trace], bound_user=bound, target=node.target)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None  # An unfamiliar read result has no safe projection.
+    if evidence:
+        return dict(omitted=True, source=call["name"], target=node.target, facts=evidence.facts, refs=evidence.refs)
+
+
+def _shorten(block, projection):
+    compact = json.dumps(projection, ensure_ascii=False, separators=(",", ":"))
+    if len(compact.encode()) >= len(block["content"].encode()):
+        return False
+    block["content"] = compact
+    return True
+
+
+def _reference_duplicates(ctx, node, reads, allowed):
+    req = ctx.req
+    # Re-check the live claim before using an older result by reference. The
+    # reader's original is used for verification only and never enters the view.
+    stored = req.retail_store.task_tool_messages(req.user_id, req.conv_id, req.dag_ticket,
+                                                 ctx.agent.agent_type.value, allowed)
+    originals = {call["id"]: (call, block) for call, block, _ in _read_pairs(stored)}
+    seen, duplicates = set(), []
+    for call, block, current in reversed(reads):
+        original = originals.get(call["id"])
+        if not original or original[0] != call:
+            continue
+        projection = _verified_projection(node, call, original[1], req.retail_user_id)
+        if not projection:
+            continue
+        key = json.dumps([call["name"], call["input"], projection["facts"]], sort_keys=True)
+        if key in seen and not current:
+            duplicates.append((call, block))
+        seen.add(key)
+    for call, block in reversed(duplicates):
+        if _shorten(block, dict(omitted=True, source=call["name"], ref="tool:" + call["id"])):
+            yield "reference_old_read"
+
+
+
 def single_agent_hooks():
     return [SkillGateHook(), SameTurnExecutionHook(), OpenRequestsHandoffHook(), ConfirmationStopHook(),
-            PublishCheckHook()]
+            PublishCheckHook(), AgentContextBudgetHook()]
 
 
 def role_hooks():
     # 顺序即拒绝优先级：未知结果最先，其次跨轮执行，再角色权限；清单提醒只在其余检查通过后生效。
     return [UnknownResultHook(), SameTurnExecutionHook(), TaskPermissionHook(), SkillGateHook(),
-            OpenRequestsHandoffHook(), ConfirmationStopHook(), WriteStateHook(), PublishCheckHook()]
+            OpenRequestsHandoffHook(), ConfirmationStopHook(), WriteStateHook(), PublishCheckHook(), AgentContextBudgetHook()]
 
 
 __all__ = ["UnknownResultHook", "SameTurnExecutionHook", "TaskPermissionHook", "ConfirmationStopHook",
            "WriteStateHook", "SkillGateHook", "OpenRequestsHandoffHook", "PublishCheckHook", "REVISABLE",
-           "single_agent_hooks", "role_hooks"]
+           "AgentContextBudgetHook", "single_agent_hooks", "role_hooks"]

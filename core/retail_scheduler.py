@@ -14,6 +14,8 @@ class Execution:
     selected: dict = field(default_factory=dict)
     stop: str = ""
     attempts: list[dict] = field(default_factory=list)
+    source: dict = field(default_factory=dict)
+    selection_sources: dict = field(default_factory=dict)
 
     @classmethod
     def start(cls, plan, bound_user=""):

@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from anthropic import AsyncAnthropic
 
+from core.agent_context_budget import ContextLimit
 from core.llm_utils import extract_text_content
 
 logger = logging.getLogger(__name__)
@@ -284,6 +285,8 @@ class MCPToolManager:
                 reranked=reranked,
             )
 
+        except ContextLimit:
+            raise
         except asyncio.TimeoutError:
             tool.stats.failed += 1
             tool.stats.consecutive_fails += 1
@@ -388,6 +391,8 @@ class MCPToolManager:
                 }
             )
             return result
+        except ContextLimit:
+            raise
         except Exception as ex:
             logger.warning(f"查询改写失败，使用原始查询: {ex}")
             diag.update(
@@ -491,6 +496,8 @@ class MCPToolManager:
         degraded = False
         subquery_results: List[Dict[str, Any]] = []
         for sub_query, result in zip(sub_queries, results):
+            if isinstance(result, ContextLimit):
+                raise result
             if isinstance(result, Exception):
                 degraded = True
                 logger.warning(f"子查询执行异常: {result}")
@@ -695,6 +702,8 @@ class MCPToolManager:
                 return items[:top_k], False
             diag["rerank_status"] = "applied"
             return reranked[:top_k], True
+        except ContextLimit:
+            raise
         except Exception as ex:
             logger.warning(f"重排失败，返回原始顺序: {ex}")
             diag["rerank_status"] = "failed"

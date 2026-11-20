@@ -258,7 +258,7 @@ def constrain_response(
     pending_before: list[dict[str, Any]], pending_after: list[dict[str, Any]],
     turn: int, bound_user_id: str | None, language: str = "zh",
     session_events: list[dict[str, Any]] | None = None,
-    user_order_ids: set[str] | None = None, return_basis=None, dag_confirmation_basis=None, dag_post_write=None,
+    user_order_ids: set[str] | None = None, return_basis=None, dag_confirmation_basis=None, dag_post_write=None, stop_reason=None,
 ) -> GuardedResponse:
     """输入仅限服务层选出的同会话本轮事实；开放语义仍需独立复核。"""
     started = time.perf_counter()
@@ -532,7 +532,11 @@ def constrain_response(
                 note = "\n".join(filter(None, (dag_confirmation_basis[1], note)))
             if note:
                 text = note + "\n\n" + text
-            text = (text + "\n\n" + display).strip()
+            if display not in text:
+                text = (text + "\n\n" + display).strip()
+    if stop_reason in {"context_limit", "budget_stop", "request_limit"} and stop_reason not in text:
+        note = (f"Further processing stopped ({stop_reason})." if english else f"后续处理已停止（{stop_reason}）。")
+        text = note + "\n" + text
     return GuardedResponse(text=text, record={
         "version": "u09.3", "changed": text != candidate,
         "mode": "controlled" if blocks else "checked",

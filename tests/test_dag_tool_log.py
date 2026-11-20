@@ -317,7 +317,10 @@ def test_terminal_before_publish_preserves_journal_and_never_replays(db, monkeyp
     restored = reopen(db)
     recovered, model = run_service(restored, workflow, "off", READ, "continue")
     assert recovered.success and not model.plans and not model.requests and recovered.response_guard["version"]
-    assert [r for r in restored.conversation_log("u","c") if r["turn"] == 1] == prior
+    rows = restored.conversation_log("u","c")
+    assert [r for r in rows if r["kind"] == KIND] == prior
+    assert [(r["turn"], r["content"][-1]["text"]) for r in rows if r["kind"] != KIND] == [
+        (1, READ[0]["quote"]), (1, recovered.response)]
 
 
 def test_two_writers_cannot_dispatch_same_call(db):
