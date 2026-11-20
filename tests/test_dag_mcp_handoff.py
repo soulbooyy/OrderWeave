@@ -55,3 +55,21 @@ def test_private_task_view_carries_verified_binding_without_identifier():
     assert "secret_customer" not in json.dumps(data)
     assert not task_context(assignment,Request("hi","u","c"))["session"]["identity_verified"]
     assert "session" not in task_context({**assignment,"kind":"product_info"},Request("hi","u","c"))
+
+
+def test_composer_omits_unselected_branch_while_waiting_for_confirmation():
+    from agents.retail_dag_composer import compose_tasks
+    from core.retail_dag import Status
+    from evaluation.harness.deepseek_holdout import load_gold
+    case = next(c for c in load_gold() if c.write_args)
+    plan = Plan.for_execution([n.planned() for n in case.nodes],case.message,"u","c")
+    state = Execution.start(plan)
+    source, write, other = plan.nodes
+    run = state.runs[source.id]
+    run.status,run.refs,run.facts = Status.SUCCEEDED,("tool:a",),{"ventilation":"low"}
+    state.operation = {"kind":"return","op_id":"op"}
+    state.runs[write.id].status = Status.WAITING_USER
+    assert state.runs[other.id].status == Status.PENDING
+    answer=compose_tasks(state,"en","SERVER CARD")
+    assert "order status" not in answer and "low" in answer and "return" in answer
+    assert answer.endswith("SERVER CARD")

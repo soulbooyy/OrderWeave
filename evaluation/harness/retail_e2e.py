@@ -82,8 +82,12 @@ async def session(case, mode, rep, stage, cap):
         assert store.find_user_by_email(client,conv,before["users"][uid]["email"])["success"]
         seen = set()
         for t, message in enumerate(case.turns,1):
-            if t>1 and (not row["cards"] or row["events"]):
-                break
+            if t > 1:
+                pending = store.active_pending(client, conv)
+                expected_args = dict(order_id=case.order,item_ids=[case.write_args[0]],payment_method_id=case.write_args[1])
+                if (len(row["cards"]) != 1 or len(pending) != 1 or row["events"]
+                        or pending[0]["op_id"] != row["cards"][0]["op_id"] or pending[0]["args"] != expected_args):
+                    break
             row["user_turns"].append(message)
             intents, role_outputs = [], []
             def capture(e):

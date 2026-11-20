@@ -24,7 +24,13 @@ def compose_tasks(state, language, note, *, by_task=None):
         subject = f"{target} " if target else ""
         if run.status == Status.SKIPPED:
             continue
-        if task.run_if and task.run_if.evaluate(state.runs[task.run_if.source]) is True:
+        selected = task.run_if.evaluate(state.runs[task.run_if.source]) if task.run_if else None
+        if selected is False and run.status in (Status.PENDING, Status.BLOCKED, Status.READY):
+            continue
+        if selected is True:
+            if run.status == Status.WAITING_USER and state.operation.get("kind") in {"return", "exchange"}:
+                kind = state.operation["kind"]
+                label = kind if english else {"return": "退货", "exchange": "换货"}[kind]
             parent = state.runs[task.run_if.source]
             field = task.run_if.field
             basis = _LABELS[field][english]
