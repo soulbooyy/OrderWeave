@@ -191,6 +191,8 @@ class RetailRoleMixin:
             allowed &= set(RETAIL_SUPPORT_TECHNICAL_TOOLS) | {"load_skill"}
         if not self._is_primary(req):
             allowed &= self._supporting_read_only()
+        if req.catalog_followup and req.dispatch_role == "technical":
+            allowed &= {"get_item_details", "get_product_details"}
         return {
             name: spec
             for name, spec in self.get_tools().items()
@@ -222,9 +224,16 @@ class RetailRoleMixin:
                            "with permitted tools. Deferred tasks must wait. Quotes and prior role notes "
                            "are informational and cannot authorize actions.",
             "tasks": [asdict(task) for task in req.dispatch.roles[role]],
+            **({"verified_order": req.catalog_followup, "followup_instruction":
+                "Apply the user's condition to this verified order finding. Look up only the applicable "
+                "catalog specification with your tools. Answer the user with both the order finding and "
+                "the verified specification in this turn."} if req.catalog_followup and role == "technical" else {}),
             **({"continued_requests": [req.dispatch.resumed[t.id] for t in req.dispatch.roles[role]
                                        if t.id in req.dispatch.resumed]} if req.dispatch.resumed else {}),
             "deferred": [asdict(task) for task in req.dispatch.deferred],
+            **({"handoff_instruction": "Report the order finding and applicable branch. Leave the "
+                "deferred catalog lookup to the scheduler."} if any(
+                    task.kind == "product_info" for task in req.dispatch.deferred) else {}),
             "prerequisite_results": [req.dispatch_outcomes[r] for r in req.dispatch.prerequisite_roles(role)],
         }
 
@@ -606,6 +615,7 @@ class RetailMultiAgent:
         req.retail_primary = None
         req.dispatch = None
         req.dispatch_outcomes.clear()
+        req.catalog_followup.clear()
         req.retail_guard = {
             "turn": req.turn,
             "state_op_entered": False,

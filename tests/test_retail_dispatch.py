@@ -202,3 +202,86 @@ def test_return_lookup_basis_uses_verified_variant_and_matching_pending_card():
     assert "$19.95, below your $20.00" in reply and reply.index("333444") < reply.index("Pending card")
     assert reply.count("Pending card") == 1 and "Refund arrived" not in reply
     assert "$19.95" not in guard(dict(pending, order_id="#W9999"))
+
+
+@pytest.mark.parametrize("workflow_mode", ["legacy", "langgraph"])
+def test_ready_catalog_step_runs_after_primary_in_same_turn(workflow_mode, tmp_path, monkeypatch):
+    from agents.agent_orchestrator import AgentResponse
+    from agents.retail_agent import RetailService
+    from agents.retail_multi_agent import RetailMultiAgent
+    from evaluation.harness.config import SEED_PATH
+    from mcp_tools.retail_store import RetailStore
+
+    rows = [dict(node("a", "billing_lookup"), quote="read #W123"),
+            dict(node("b", "product_info", "a"), quote="check variant 111222")]
+    message = "Please read #W123 and check variant 111222"
+    app = router("dag", rows)
+    primary, helper = (app._best_agent(r) for r in (AgentType.BILLING, AgentType.TECHNICAL))
+    app.set_shared_tools(dict.fromkeys(("get_item_details", "get_order_details", "return_delivered_order_items")))
+    calls = []
+
+    async def read_order(req):
+        calls.append(("billing", req.turn))
+        trace = {"agent_type": "billing", "tool_name": "get_order_details", "result_success": True,
+                 "input": {"order_id": "#W123"}, "result": {"success": True, "order": {
+                     "order_id": "#W123", "items": [{}, {}], "address": {"zip": "private"}}}}
+        return AgentResponse(AgentType.BILLING, "Two items; catalog lookup pending.", True, tool_traces=[trace])
+
+    async def read_catalog(req):
+        calls.append(("technical", req.turn))
+        assignment = helper._assignment(req)
+        assert assignment["verified_order"] == {"order_id": "#W123", "purchased_item_count": 2}
+        assert [t["id"] for t in assignment["tasks"]] == ["b"]
+        assert not helper._is_primary(req) and set(helper._tools_for_request(req)) == {"get_item_details"}
+        trace = {"agent_type": "technical", "tool_name": "get_item_details", "result_success": True,
+                 "input": {"item_id": "111222"}, "result": {"success": True, "item": {"item_id": "111222"}}}
+        return AgentResponse(AgentType.TECHNICAL, "Two items; ventilation is high.", True, tool_traces=[trace])
+
+    monkeypatch.setattr(primary, "handle", read_order)
+    monkeypatch.setattr(helper, "handle", read_catalog)
+
+    async def run():
+        if workflow_mode == "legacy":
+            req = Request(message, "u", "c", turn=1)
+            result = await app.run(req)
+            assert not req.dispatch.deferred and result.primary_agent == AgentType.BILLING
+        else:
+            if not SEED_PATH.is_file():
+                pytest.skip("requires the public retail seed")
+            store = RetailStore(tmp_path / "store.db", SEED_PATH)
+            service = RetailService(store, RetailMultiAgent(app), workflow_mode="langgraph")
+            try:
+                result = await service.handle_turn(message, "u", "c")
+            finally:
+                await service.workflow.close()
+            assert result.primary_agent == "billing"
+            assert [n for n in result.workflow["node_path"] if n in ROLES] == ["billing", "technical"]
+        assert result.success and result.response == "Two items; ventilation is high."
+        assert [t["agent_type"] for t in result.tool_traces] == ["billing", "technical"]
+        assert calls == [("billing", 1), ("technical", 1)]
+
+    asyncio.run(run())
+
+
+def test_catalog_continuation_requires_a_verified_read_and_preserves_unfinished_work():
+    from agents.agent_orchestrator import AgentResponse
+
+    rows = [node("a", "billing_lookup"), dict(node("b", "product_info", "a"), quote="variant 111222")]
+    app = router("dag", rows)
+    app.set_shared_tools({"get_item_details": object()})
+    req = Request("billing_lookup: variant 111222", "u", "c", turn=1)
+    decision = asyncio.run(app.prepare_route(req))
+    trace = {"agent_type": "billing", "tool_name": "get_order_details", "input": {"order_id": "#W1"},
+             "result": {"success": True, "order": {"order_id": "#W1", "items": []}}, "result_success": False}
+    primary = AgentResponse(AgentType.BILLING, "Partial order finding.", True, tool_traces=[trace])
+    assert not app.activate_catalog_followup(req, decision, primary)
+    trace["result_success"] = True
+    req.retail_pending = [{"op_id": "pending"}]
+    assert not app.activate_catalog_followup(req, decision, primary)
+    req.retail_pending = []
+    assert app.activate_catalog_followup(req, decision, primary)
+    assert not app.activate_catalog_followup(req, decision, primary)
+    helper = AgentResponse(AgentType.TECHNICAL, "Unverified claim.", True)
+    result = asyncio.run(app.finish_catalog_followup(req, decision, primary, helper, 0))
+    assert not result.success and result.response == primary.content
+    assert [t.id for t in req.dispatch.deferred] == ["b"]

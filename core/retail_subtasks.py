@@ -78,16 +78,19 @@ def _ordered_tasks(raw: object, message: str, mode: str) -> list[Task]:
         raise ValueError("cyclic_dependencies") from exc
 
 
-def next_catalog_steps(dispatch, traces):
-    """Persist only catalog reads whose private lookup actually succeeded."""
-    if not dispatch or not dispatch.deferred:
-        return {}
-    reads = [(t["agent_type"], t["result"]["order"]["order_id"])
-             for t in traces if t.get("tool_name") == "get_order_details"
+def verified_order_reads(traces):
+    return [t for t in traces if t.get("tool_name") == "get_order_details"
              and not t.get("blocked_by_guard") and not t.get("skipped") and t.get("success") is not False
              and t.get("result_success") is True and (t.get("result") or {}).get("success") is True
              and t["result"].get("order", {}).get("order_id") == (t.get("input") or {}).get("order_id")
              and t["result"].get("order", {}).get("order_id")]
+
+
+def next_catalog_steps(dispatch, traces):
+    """Persist only catalog reads whose private lookup actually succeeded."""
+    if not dispatch or not dispatch.deferred:
+        return {}
+    reads = {(t["agent_type"], t["result"]["order"]["order_id"]) for t in verified_order_reads(traces)}
     orders = {order for _, order in reads}
     if len(orders) != 1:
         return {}

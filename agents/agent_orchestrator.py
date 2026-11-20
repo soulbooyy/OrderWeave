@@ -36,7 +36,7 @@ from agents.tools import (
 from agents.agent_loop import LoopError, LoopHook, MethodHook, run_tool_loop
 from core.intent_recognizer import IntentCategory, IntentRecognizer, UrgencyLevel
 from core.llm_utils import extract_text_content
-from core.retail_subtasks import Dispatch, MODES, plan_dispatch
+from core.retail_subtasks import Dispatch, MODES, next_catalog_steps, plan_dispatch, verified_order_reads
 from mcp_tools.retail_domain import WRITE_KINDS
 
 logger = logging.getLogger(__name__)
@@ -204,6 +204,7 @@ class Request:
     dispatch_outcomes: dict = field(default_factory=dict)
     dispatch_role: Optional[str] = None
     catalog_steps: dict = field(default_factory=dict)
+    catalog_followup: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -1120,7 +1121,72 @@ class AgentOrchestrator:
         if prepared.multi_agent:
             return await self.run_parallel(req, prepared)
         response = await self._execute(req, prepared.primary_agent)
+        if self.activate_catalog_followup(req, prepared, response):
+            helper = await self.execute_role(req, AgentType.TECHNICAL, allow_missing_fallback=False)
+            return await self.finish_catalog_followup(req, prepared, response, helper, t0)
         return self.finish_single(req, prepared, response, t0)
+
+    def activate_catalog_followup(self, req, decision, response):
+        """Release a read-only successor once, using the primary's actual tool result."""
+        plan = req.dispatch
+        if (not plan or not plan.deferred or self.routing_mode != "dag" or decision.multi_agent
+                or not response.success or req.retail_pending
+                or self._escalation_recorded([response])):
+            return False
+        guard = req.retail_guard or {}
+        if any(guard.get(k) for k in ("state_op_entered", "unknown_result", "prepared", "submitted", "handoff")):
+            return False
+        upstream = plan.roles.get(decision.primary_agent.value, [])
+        if len(upstream) != 1 or upstream[0].kind not in {"order_lookup", "billing_lookup"}:
+            return False
+        ready = next_catalog_steps(plan, response.tool_traces)
+        if not ready or len(ready["ready"]) != len(plan.deferred):
+            return False
+        technical = self._best_agent(AgentType.TECHNICAL)
+        if (not technical or self._monitor_degraded(AgentType.TECHNICAL)
+                or not {"get_item_details", "get_product_details"}.intersection(technical._tools_for_request(req))):
+            return False
+        order = verified_order_reads(response.tool_traces)[-1]["result"]["order"]
+        requested = {v.lstrip("#").upper() for v in re.findall(r"#?W\d+", req.message, re.I)}
+        if requested - {order["order_id"].lstrip("#").upper()}:
+            return False
+        # Share only the facts needed for the conditional catalog read, never the raw private record.
+        req.catalog_followup = {"order_id": order["order_id"]}
+        if isinstance(order.get("items"), list):
+            req.catalog_followup["purchased_item_count"] = len(order["items"])
+        req.dispatch = replace(plan, roles={**plan.roles, "technical": list(plan.deferred)}, deferred=[])
+        decision.supporting_agents.append(AgentType.TECHNICAL)
+        req.retail_routing["dispatch"]["same_turn_catalog"] = [t.id for t in plan.deferred]
+        return True
+
+    async def finish_catalog_followup(self, req, decision, primary, helper, t0):
+        # Keep the primary's identity and the chronological traces; its interim reply can
+        # describe a missing lookup that the helper subsequently completed.
+        confirmed_ids = set()
+        for trace in helper.tool_traces:
+            if (trace.get("agent_type") != "technical" or trace.get("result_success") is not True
+                    or trace.get("blocked_by_guard") or trace.get("skipped") or trace.get("success") is False
+                    or (trace.get("result") or {}).get("success") is not True):
+                continue
+            args = trace.get("input") or {}
+            if trace.get("tool_name") == "get_item_details":
+                item_id = (trace["result"].get("item") or {}).get("item_id")
+                if item_id and item_id == args.get("item_id"):
+                    confirmed_ids.add(str(item_id))
+            elif trace.get("tool_name") == "get_product_details":
+                product = trace["result"].get("product") or {}
+                if product.get("product_id") and product["product_id"] == args.get("product_id"):
+                    confirmed_ids.add(str(product["product_id"]))
+                    confirmed_ids.update(product.get("variants") or {})
+        unfinished = []
+        for task in decision.dispatch.deferred:
+            ids = set(re.findall(r"\d{6,}", task.quote))
+            if not helper.success or not helper.content.strip() or not confirmed_ids or (ids and ids.isdisjoint(confirmed_ids)):
+                unfinished.append(task)
+        made_progress = len(unfinished) < len(decision.dispatch.deferred)
+        req.dispatch = replace(decision.dispatch, deferred=unfinished)
+        return await self.finish_parallel(req, decision, [primary, helper], [helper if made_progress else primary],
+                                          replace(primary, success=not unfinished), t0)
 
     async def prepare_route(self, req: Request):
         """识别并选择原有角色；澄清结果不执行角色。"""

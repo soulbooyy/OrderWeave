@@ -191,7 +191,7 @@ class RetailWorkflow:
         response = call["role_response"]
         if call.get("failed_response") is not None:
             response = orchestrator.merge_fallback(call.pop("failed_response"), response)
-        elif orchestrator.should_fallback(req, AgentType(state["active_role"]), response) and orchestrator._best_agent(AgentType.GENERAL):
+        elif not req.catalog_followup and orchestrator.should_fallback(req, AgentType(state["active_role"]), response) and orchestrator._best_agent(AgentType.GENERAL):
             call["failed_response"] = response
             return self._step(state, "handoff_role", next_role="general", phase="role_fallback")
         if len(call["responses"]) < len(call["supporting"]) and getattr(orchestrator, "retail_support_enabled", False):
@@ -200,6 +200,8 @@ class RetailWorkflow:
                 call["decision"].primary_agent.value, req.turn, response)
         call["responses"].append(response)
         queue = state["role_queue"][1:]
+        if not queue and orchestrator.activate_catalog_followup(req, call["decision"], response):
+            queue = ["technical"]
         return self._step(state, "handoff_role", role_queue=queue,
                           next_role=queue[0] if queue else "compose_roles", phase="role_handoff")
 
@@ -211,7 +213,10 @@ class RetailWorkflow:
         responses = call["responses"]
         started = time.perf_counter()
         try:
-            if decision.multi_agent:
+            if req.catalog_followup:
+                result = await agent.orchestrator.finish_catalog_followup(
+                    req, decision, responses[0], responses[1], call["agent_started"])
+            elif decision.multi_agent:
                 result = await agent.orchestrator.finish_parallel(req, decision, responses,
                     [responses[-1]] + responses[:-1], responses[-1], call["agent_started"])
             else:
