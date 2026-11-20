@@ -54,26 +54,31 @@ class SameTurnExecutionHook(LoopHook):
                 ctx.state["stop_response"] = result["display_text"]
 
 
-class PrimaryOnlyHook(LoopHook):
-    """多 Agent 下只有本请求主执行角色可以绑定身份、写入或记录交接。"""
+class TaskPermissionHook(LoopHook):
+    """Check the role and node scope again immediately before invoking a tool."""
 
-    name = "primary_only"
+    name = "task_permission"
 
     def pre_tool(self, ctx, name, args) -> Optional[str]:
-        agent = ctx.agent
-        if ctx.req.dag_tool_limit is not None:
-            assignment = ctx.req.dag_assignment
-            target_arg = {"get_item_details": "item_id", "get_product_details": "product_id",
-                          "get_order_details": "order_id"}.get(name)
-            wrong_target = (assignment and target_arg and args.get(target_arg) != assignment["target"])
-            if wrong_target or name not in agent._tools_for_request(ctx.req):
-                return ("This task does not permit that tool." if _en(ctx) else "当前任务无权调用此工具。")
-            return None
-        if agent._is_primary(ctx.req) or name in agent._supporting_read_only():
-            return None
-        return ("Only the primary agent of this request may bind identity, prepare or submit a return, "
-                "or record a handoff." if _en(ctx) else
-                "只有本次请求的主执行 Agent 才能绑定身份、准备／提交退货或记录人工交接。")
+        assignment = ctx.req.dag_assignment
+        if name in ctx.agent._tools_for_request(ctx.req):
+            if assignment is None:
+                if (ctx.req.dag_tool_limit is not None and ctx.req.dispatch is None
+                        and name in RETAIL_WRITE_TOOLS and not is_execution_attempt(name, args, ctx.req.retail_pending)):
+                    return ("Use the exact displayed operation." if _en(ctx) else "只能续办参数与已展示详情一致的操作。")
+                return None
+            if name == "modify_user_address":
+                actual_target = ctx.req.retail_user_id
+            elif name in RETAIL_WRITE_TOOLS or name == "get_order_details":
+                actual_target = args.get("order_id")
+            elif name in {"get_item_details", "get_product_details"}:
+                actual_target = args.get("item_id" if name == "get_item_details" else "product_id")
+            else:
+                return None
+            if actual_target and actual_target == assignment.get("target"):
+                return None
+        return ("This role or task does not permit that tool or target." if _en(ctx)
+                else "当前角色或任务无权对该目标调用此工具。")
 
 
 class ConfirmationStopHook(LoopHook):
@@ -199,10 +204,10 @@ def single_agent_hooks():
 
 def role_hooks():
     # 顺序即拒绝优先级：未知结果最先，其次跨轮执行，再角色权限；清单提醒只在其余检查通过后生效。
-    return [UnknownResultHook(), SameTurnExecutionHook(), PrimaryOnlyHook(), SkillGateHook(),
+    return [UnknownResultHook(), SameTurnExecutionHook(), TaskPermissionHook(), SkillGateHook(),
             OpenRequestsHandoffHook(), ConfirmationStopHook(), WriteStateHook(), PublishCheckHook()]
 
 
-__all__ = ["UnknownResultHook", "SameTurnExecutionHook", "PrimaryOnlyHook", "ConfirmationStopHook",
+__all__ = ["UnknownResultHook", "SameTurnExecutionHook", "TaskPermissionHook", "ConfirmationStopHook",
            "WriteStateHook", "SkillGateHook", "OpenRequestsHandoffHook", "PublishCheckHook", "REVISABLE",
            "single_agent_hooks", "role_hooks"]

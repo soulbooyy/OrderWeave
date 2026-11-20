@@ -242,7 +242,7 @@ def test_task_permissions_through_tool_loop(tmp_path, monkeypatch, kind, role, a
     seen = []
 
     async def script(**kwargs):
-        seen.append({s["name"] for s in kwargs["tools"]})
+        seen.append({s["name"] for s in kwargs.get("tools", [])})
         if len(seen) == 1:
             args = {"order_id": order["order_id"]}
             if tool == "return_delivered_order_items":
@@ -276,7 +276,7 @@ def test_support_mode_fallback_preserves_original_tool_limit_and_hook(language, 
     import json
     from types import SimpleNamespace
     from agents.agent_orchestrator import AgentResponse, AgentType, Request
-    from agents.retail_hooks import PrimaryOnlyHook
+    from agents.retail_hooks import TaskPermissionHook
     from agents.retail_multi_agent import RetailTechnicalAgent
     from tests.test_retail_dispatch import router
 
@@ -292,14 +292,13 @@ def test_support_mode_fallback_preserves_original_tool_limit_and_hook(language, 
 
     async def handle(request):
         visible = general._tools_for_request(request)
-        assert set(visible) == {"get_product_details", "calculate"}
+        assert not visible
         ctx = SimpleNamespace(req=request, agent=general)
-        for name in ("get_order_details", "get_item_details", "transfer_to_human_agents"):
-            assert PrimaryOnlyHook().pre_tool(ctx, name, {})
-        assert PrimaryOnlyHook().pre_tool(ctx, "get_product_details", {}) is None
+        for name in ("get_order_details", "get_item_details", "get_product_details", "calculate", "transfer_to_human_agents"):
+            assert TaskPermissionHook().pre_tool(ctx, name, {})
         packet = json.loads(general._build_role_packet(request))
         duty = packet["retail"]["rules"]
-        assert "get_product_details" in duty and "get_order_details" not in duty
+        assert "get_product_details" not in duty and "get_order_details" not in duty
         assert "primary" not in packet["retail"] and duty in general._build_system_prompt(request)
         return AgentResponse(AgentType.GENERAL, "checked", True)
     monkeypatch.setattr(general, "handle", handle)

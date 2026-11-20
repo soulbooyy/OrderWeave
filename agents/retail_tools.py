@@ -22,8 +22,7 @@ _RETAIL_KNOWLEDGE_DESCRIPTION = (
     "只用于解释固定政策和准备注意事项，不构成退货资格、期限、运费或到账承诺。"
 )
 
-# 零售多角色权限：只有主执行者可以绑定身份、准备／提交退货和记录交接；
-# 辅助角色的工具白名单只保留只读查询。
+# 可安全串行读取的业务工具；角色可见性另由 ROLE_TOOLS 限定。
 RETAIL_READ_ONLY_TOOLS = (
     "get_user_details",
     "get_order_details",
@@ -40,7 +39,26 @@ RETAIL_STATE_TOOLS = (
     *RETAIL_WRITE_TOOLS,
     "transfer_to_human_agents",
 )
-RETAIL_ALL_TOOLS = RETAIL_STATE_TOOLS + RETAIL_READ_ONLY_TOOLS
+# Explicit grants: registering a new tool does not expose it to any role.
+_ACCOUNT_TOOLS = ("find_user_id_by_email", "find_user_id_by_name_zip", "get_user_details", "get_order_details")
+_POLICY_TOOLS = ("load_skill", "search_knowledge_base")
+ROLE_TOOLS = {
+    "general": _ACCOUNT_TOOLS + _POLICY_TOOLS + (
+        "cancel_pending_order", "modify_pending_order_items", "modify_pending_order_address",
+        "modify_pending_order_payment", "modify_user_address",
+    ),
+    "billing": _ACCOUNT_TOOLS + _POLICY_TOOLS + (
+        "calculate", "return_delivered_order_items", "exchange_delivered_order_items",
+    ),
+    "technical": ("get_product_details", "get_item_details", "list_all_product_types",
+                  "search_knowledge_base", "calculate"),
+    "escalation": ("transfer_to_human_agents",),
+}
+
+WRITE_OWNERS = {
+    WRITE_KINDS[name]: role for role, tools in ROLE_TOOLS.items()
+    for name in tools if name in WRITE_KINDS
+}
 
 # Server-owned capabilities. The classifier supplies task kinds, never tool names.
 _ORDER_READS = frozenset({"get_order_details", "get_user_details", "calculate"})
@@ -58,18 +76,10 @@ TASK_TOOLS = {
 
 
 def task_tool_limit(tasks):
-    """Until the node scheduler lands, coalesced assignments get their common permissions."""
+    """Legacy grouped assignments receive only their common task permissions."""
     limits = [TASK_TOOLS.get(task.kind, frozenset()) for task in tasks]
     return frozenset.intersection(*limits) if limits else frozenset()
 
-
-# 支持模式的商品资料角色只保留公开商品查询、必要计算和知识检索；
-# 身份、订单、准备／提交与交接由主执行者和原业务链负责。
-RETAIL_SUPPORT_TECHNICAL_TOOLS = (
-    "get_product_details",
-    "calculate",
-    "search_knowledge_base",
-)
 
 _CATEGORY_MARKERS = {
     "consumer_electronics": ("电子", "耳机", "电脑", "手机", "相机", "平板", "earbuds", "headphones", "laptop", "smartphone", "camera", "tablet"),

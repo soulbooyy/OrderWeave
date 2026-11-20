@@ -144,16 +144,18 @@ def test_modes_are_isolated_in_prompts_cache_and_harness():
         router("invalid", [])
 
 
-def test_general_retry_of_a_helper_preserves_assignment_and_read_only_permissions(monkeypatch):
+def test_general_retry_preserves_assignment_and_cannot_borrow_write_permissions(monkeypatch):
     from agents.agent_orchestrator import AgentResponse
 
     app = legacy_assignment_router([node("a", "product_info"), node("b", "order_change", "a")])
     req = Request("product_info order_change", "u", "c", turn=1)
     general = app._best_agent(AgentType.GENERAL)
     seen = []
+    app.set_shared_tools({"cancel_pending_order": object()})
 
     async def handle(request):
-        seen.append((general._is_primary(request), general._assignment(request)["tasks"][0]["id"]))
+        seen.append(("cancel_pending_order" in general._tools_for_request(request),
+                     general._assignment(request)["tasks"][0]["id"]))
         return AgentResponse(AgentType.GENERAL, "checked", True)
 
     monkeypatch.setattr(general, "handle", handle)
@@ -194,7 +196,8 @@ def test_deferred_lookup_resumes_only_its_verified_order_and_catalog_request():
     app._best_agent(AgentType.TECHNICAL).retail_allowed_tools = ()
     req = Request(msg, "u", "c", intent=IntentCategory.QUERY, catalog_steps=saved)
     decision = app._route_decision(req, current)
-    assert list(decision.dispatch.roles) == ["general", "billing"]
+    assert list(decision.dispatch.roles) == ["billing"]
+    assert not decision.dispatch.resumed
 
 
 def test_return_lookup_basis_uses_verified_variant_and_matching_pending_card():

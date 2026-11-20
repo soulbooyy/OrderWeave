@@ -700,8 +700,9 @@ class RetailService:
 
             def view(agent, tools):
                 extra = agent._transient_blocks(request)
-                is_primary = getattr(agent, "_is_primary", None)
-                if extra and (is_primary is None or is_primary(request)):
+                role = agent.agent_type.value
+                if extra and (not request.retail_primary or
+                              (role == request.retail_primary and request.dispatch_role in (None, role))):
                     # 主执行角色看到的附加块随本轮用户消息写入日志，使其下一轮前缀与本轮一致。
                     turn_extra[:] = extra
                 return engine.view(client_user_id, conv_id, user_content, tools.keys(), extra=extra)

@@ -219,7 +219,7 @@ class DagRunner:
             if not actor or self.router._monitor_degraded(role):
                 run.move(Status.BLOCKED, reason="role_unavailable")
                 continue
-            scope = replace(self.req, dag_assignment={"id": task.id}, dispatch_role=role.value,
+            scope = replace(self.req, dag_assignment={"id": task.id, "kind": task.kind}, dispatch_role=role.value,
                             dag_tool_limit=TASK_TOOLS[task.kind])
             available = actor._tools_for_request(scope)
             if task.kind in WRITES:

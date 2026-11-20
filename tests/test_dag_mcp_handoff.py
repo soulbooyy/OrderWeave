@@ -11,7 +11,8 @@ from mcp_tools.retail_protocol import build_context_meta, parse_context_meta, Re
 from mcp_tools.retail_store import RetailStore
 
 
-def test_real_mcp_write_restores_claim_and_links_the_confirmation(tmp_path):
+@pytest.mark.parametrize("role", ["general", "technical", "escalation", "billing"])
+def test_real_mcp_write_restores_claim_and_links_the_confirmation(tmp_path, role):
     import asyncio
     from agents.retail_tools import retail_tools
     from mcp_tools.retail_server import _call_tool
@@ -26,7 +27,7 @@ def test_real_mcp_write_restores_claim_and_links_the_confirmation(tmp_path):
     plan = Plan.for_execution([dict(id="w",kind="return_change",quote=q,target=oid,output="executed",depends_on=[])],q,"u","c")
     state = Execution.start(plan,uid)
     state.next_node(turn)
-    state.runs["w"].claim("billing",turn)
+    state.runs["w"].claim(role,turn)
     store.save_dag(state)
     claim = (plan.id,"w",state.revision,turn)
     args = dict(order_id=oid,item_ids=[order["items"][0]["item_id"]],payment_method_id=order["payment_history"][0]["payment_method_id"])
@@ -37,6 +38,12 @@ def test_real_mcp_write_restores_claim_and_links_the_confirmation(tmp_path):
     from mcp.shared.exceptions import McpError
     with pytest.raises(McpError): call((plan.id,"wrong",state.revision,turn))
     assert not store.active_pending("u","c")
+    if role != "billing":
+        with pytest.raises(McpError, match="Invalid or stale DAG write claim"):
+            call(claim)
+        assert not store.active_pending("u", "c")
+        assert not any(e["event_type"] == "return_requested" for e in store.list_events("u", "c"))
+        return
     call(claim)
     pending,=store.active_pending("u","c")
     assert store.prepared_for_task(plan.id,"w",turn)==pending["op_id"]

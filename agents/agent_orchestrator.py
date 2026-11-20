@@ -448,7 +448,7 @@ class BaseAgent:
         validate_tool_input(spec, args, language=language)
 
     def _tools_for_request(self, req: Request) -> Dict[str, AgentToolSpec]:
-        """按真实请求返回工具白名单；零售角色据此区分主执行与只读辅助。"""
+        """按请求返回工具白名单；零售角色会进一步按节点收窄权限。"""
         return self.get_tools()
 
     def _guard_tool_call(
@@ -1165,7 +1165,7 @@ class AgentOrchestrator:
         # 1. 调用方未识别过意图时，这里识别。
         if req.intent is None:
             if pending_reply:
-                # 仅当前详情的确认或补充由账单角色续接；提交仍由工具独立核验。
+                # 待确认详情由对应业务角色续接，提交仍由工具独立核验。
                 req.intent = IntentCategory.REFUND
                 req.intent_group = "billing"
                 req.intent_confidence = 1.0
@@ -1279,6 +1279,17 @@ class AgentOrchestrator:
                                           reason="selective_local_semantic_route", confidence=req.intent_confidence)
                           if local_role and req.urgency != UrgencyLevel.CRITICAL else None)
         decision = support_decision or local_decision or self._route_decision(req, subtasks)
+        if (retail_mode and not pending_reply and not support_decision and not decision.dispatch
+                and req.intent == IntentCategory.REFUND and self.routing_mode == "keyword"):
+            # The six-intent classifier groups all changes under refund. Use the current
+            # turn's grounded change request to select its capable role.
+            from agents.retail_tools import WRITE_OWNERS
+
+            owner = next((WRITE_OWNERS[g["kind"]] for g in getattr(req, "retail_plan", ())
+                          if g.get("turn") == req.turn and g.get("kind") in WRITE_OWNERS), None)
+            if owner and decision.primary_agent.value != owner:
+                decision = RoutingDecision(AgentType(owner), reason="requested_change_owner",
+                                           confidence=req.intent_confidence)
         flow_exit_reasons = {
             "support_return_flow_cancelled",
             "support_return_flow_switched_to_troubleshooting",
@@ -1296,30 +1307,26 @@ class AgentOrchestrator:
                 and support_decision.reason in flow_exit_reasons
             )
             and decision.primary_agent != AgentType.ESCALATION
-            and self._pool.get(AgentType.BILLING)
         ):
-            # 当前退货详情的回复不并行辅助角色。
+            from agents.retail_tools import WRITE_OWNERS
+
+            pending = next((op for op in req.retail_pending if op.get("confirmation_approved")),
+                           req.retail_pending[0])
+            owner = AgentType(WRITE_OWNERS.get(pending.get("kind"), "billing"))
             decision = RoutingDecision(
-                primary_agent=AgentType.BILLING,
+                primary_agent=owner,
                 supporting_agents=[],
-                reason="pending_confirmation_routed_to_billing",
-                confidence=1.0,
-            )
-        if (
-            retail_mode
-            and decision.primary_agent == AgentType.ESCALATION
-            and any(not g.get("nudged") for g in getattr(req, "retail_plan", None) or [])
-            and self._pool.get(AgentType.BILLING)
-        ):
-            # 交接角色不调用模型、直接转人工；仍有未提醒的可办请求时交给业务角色先说明，
-            # 用户坚持时由其转接（转人工钩子只提醒一次）。
-            decision = RoutingDecision(
-                primary_agent=AgentType.BILLING,
-                supporting_agents=[],
-                reason="handoff_request_with_open_items",
+                reason=f"pending_confirmation_routed_to_{owner.value}",
                 confidence=1.0,
             )
         if retail_mode:
+            if schedule and self.routing_mode == "dag" and not decision.dispatch:
+                # No executable node: allow reads, binding and handoff. A pre-DAG
+                # displayed operation can still be confirmed through its original tool.
+                pending_kinds = {op.get("kind") for op in req.retail_pending
+                                 if pending_reply and op.get("status") == "displayed"}
+                req.dag_tool_limit = frozenset(tool for tool in self.shared_tools
+                                               if tool not in WRITE_KINDS or WRITE_KINDS[tool] in pending_kinds)
             req.retail_primary = decision.primary_agent.value
             req.dispatch = decision.dispatch
             if decision.dispatch:
@@ -1408,8 +1415,7 @@ class AgentOrchestrator:
         agent_types = decision.agent_types
         retail_mode = bool(getattr(self, "retail_mode", False))
         if retail_mode:
-            # 零售模式串行执行：辅助角色只读并先完成，主执行者最后执行，
-            # 避免同一请求内的写入与辅助读取并行交互。
+            # 传统路由串行执行角色，最后由主角色汇总。
             supporting = [
                 at for at in decision.supporting_agents if at != decision.primary_agent
             ][:2]
@@ -1772,7 +1778,7 @@ class AgentOrchestrator:
             ]
 
         if getattr(self, "retail_mode", False):
-            # 零售对照固定主 Agent 加至多两个只读辅助。
+            # 传统路由每轮最多安排两个辅助角色。
             supporting_agents = supporting_agents[:2]
         reason = fallback + self._routing_reason(req, available_scores, primary_agent, supporting_agents)
         if degraded_agents:
@@ -1979,6 +1985,14 @@ class AgentOrchestrator:
             )
 
         if not req.dispatch:
+            logical_role = assigned_role or agent_type
+            if getattr(self, "retail_mode", False) and agent.agent_type != logical_role:
+                prior_role = req.dispatch_role
+                req.dispatch_role = logical_role.value
+                try:
+                    return await agent.handle(req)
+                finally:
+                    req.dispatch_role = prior_role
             return await agent.handle(req)
 
         from agents.retail_handoff import role_outcome

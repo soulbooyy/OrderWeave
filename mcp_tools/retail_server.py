@@ -174,9 +174,10 @@ async def _call_tool(
                     or not request.retail_user_id or state.bound_user != request.retail_user_id):
                 break
             task = next(node for node in state.plan.nodes if node.id == task_id)
-            from agents.retail_tools import TASK_TOOLS
+            from agents.retail_tools import ROLE_TOOLS, TASK_TOOLS
             from mcp_tools.retail_domain import WRITE_KINDS
-            if name not in WRITE_KINDS or name not in TASK_TOOLS[task.kind]:
+            if (name not in WRITE_KINDS or name not in TASK_TOOLS[task.kind]
+                    or name not in ROLE_TOOLS.get(run.role, ())):
                 break
             target, _ = state.target(task)
             request.dag_assignment = {"kind": task.kind, "target": target, "operation": state.operation}

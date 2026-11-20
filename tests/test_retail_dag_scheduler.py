@@ -516,12 +516,12 @@ def test_dispatch_cap_and_budget_stop_are_bounded():
 
 def test_task_guard_rejects_wrong_branch_target_even_when_role_has_tool():
     from agents.agent_orchestrator import Request,AgentType
-    from agents.retail_hooks import PrimaryOnlyHook
+    from agents.retail_hooks import TaskPermissionHook
     from types import SimpleNamespace
     req = Request("check helmet","u","c",dag_tool_limit=frozenset({"get_item_details"}),
                   dag_assignment={"kind":"product_info","target":"1665571435","output":"ventilation"})
     ctx = SimpleNamespace(req=req,agent=SimpleNamespace(language="en",_tools_for_request=lambda req: req.dag_tool_limit))
-    guard = PrimaryOnlyHook()
+    guard = TaskPermissionHook()
     assert guard.pre_tool(ctx,"get_item_details",{"item_id":"7420906769"})
     assert guard.pre_tool(ctx,"get_item_details",{"item_id":"1665571435"}) is None
 

@@ -152,14 +152,12 @@ def plan_dispatch(raw: object, message: str, mode: str, previous=None, catalog_o
             blocked.add(task.id)
 
     private = [t for t in active if t.kind in PRIVATE]
-    # Both business roles can bind identity and act. Coalesce private work under a single owner.
+    # Both business roles can read orders. Writes and specialist work stay with their own role.
     primary = None
     if private:
         business_roles = {OWNERS[t.kind] for t in active}
         primary = "billing" if "billing" in business_roles else "general"
-    # An order/billing primary already has the order and policy context. Reserve a helper
-    # for a separate public catalog question, not for another step within its own scope.
-    owners = {t.id: primary if primary and t.kind != "product_info" else OWNERS[t.kind] for t in active}
+    owners = {t.id: primary if primary and t.kind == "order_lookup" else OWNERS[t.kind] for t in active}
     owners.update({t.id: catalog_owner for t in active if t.id in resumed})
     preferred = primary or owners[active[0].id]
     remaining = list(dict.fromkeys(owners.values()))
@@ -183,6 +181,6 @@ def plan_dispatch(raw: object, message: str, mode: str, previous=None, catalog_o
         done.update(t.id for t in roles[role])
         remaining.remove(role)
         if role == primary:
-            break  # This role needs primary-only permissions, so it must run last.
+            break  # The legacy queue ends with its designated primary role.
     deferred.extend(t for t in active if t.id not in done)
     return Dispatch(roles, deferred, resumed)
