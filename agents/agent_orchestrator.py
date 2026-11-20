@@ -36,6 +36,7 @@ from agents.tools import (
 from agents.agent_loop import LoopError, LoopHook, MethodHook, run_tool_loop
 from core.intent_recognizer import IntentCategory, IntentRecognizer, UrgencyLevel
 from core.llm_utils import extract_text_content
+from core.retail_dag import Plan
 from core.retail_subtasks import Dispatch, MODES, next_catalog_steps, plan_dispatch, verified_order_reads
 from mcp_tools.retail_domain import WRITE_KINDS
 
@@ -1287,6 +1288,24 @@ class AgentOrchestrator:
                     result.routing_reason = "repeated_clarification_stopped"
                 self._record_tool_trace(result)
                 return result
+
+        # The role queue cannot enforce a conditional edge. Never flatten one
+        # into an unconditional dispatch or silently fall back to keywords.
+        if (retail_mode and self.routing_mode == "dag" and isinstance(subtasks, list)
+                and any(isinstance(row, dict) and "run_if" in row for row in subtasks)
+                and req.intent not in (IntentCategory.ESCALATION, IntentCategory.HUMAN_HANDOFF)):
+            try:
+                Plan.build(subtasks, req.message, req.user_id, req.conv_id)
+                reason = "requires_task_scheduler"
+            except ValueError as exc:
+                reason = str(exc)
+            result = OrchestratorResult(
+                request_id=req.request_id, agent_type=AgentType.RETAIL, intent=req.intent, success=False,
+                response=("I cannot run this conditional request yet. Which step should I handle first?"
+                          if language == "en" else "当前还无法执行这个条件任务。请指定先处理哪一步。"),
+                routing_reason=f"dag_condition:{reason}", latency_ms=(time.monotonic() - t0) * 1000)
+            self._record_tool_trace(result)
+            return result
 
         # 复杂请求可能涉及多个 Agent，例如同一条消息里既有登录失败
         # 又有重复扣款。
