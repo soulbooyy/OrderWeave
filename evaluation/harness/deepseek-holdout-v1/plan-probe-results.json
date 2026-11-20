@@ -1,0 +1,1081 @@
+{
+  "freeze_commit": "2162161",
+  "phase": "plan_only",
+  "model_requested": "deepseek-flash",
+  "model_reported": "deepseek-flash",
+  "official_version": "DeepSeek-V4.1-Flash-1017",
+  "pricing_url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/",
+  "language": "en",
+  "temperature": 0.1,
+  "thinking": "disabled",
+  "max_tokens": 2048,
+  "attempts_per_case_and_mode": 1,
+  "budget": {
+    "previous_cny": "4.93183652",
+    "plan_cny": "0.02717968",
+    "cumulative_cny": "4.95901620",
+    "remaining_cny": "5.04098380"
+  },
+  "end_to_end_sessions": 0,
+  "records": [
+    {
+      "key": "H01",
+      "mode": "subintent",
+      "status": "ok",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "order_lookup",
+          "quote": "check how many items I bought on order #W1067251"
+        },
+        {
+          "id": "t2",
+          "kind": "product_info",
+          "quote": "look up the size of grill variant 7848293342"
+        },
+        {
+          "id": "t3",
+          "kind": "product_info",
+          "quote": "look up the color of earbuds variant 6452271382"
+        }
+      ],
+      "latency_ms": 1393.4520001057535,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 3,
+        "nodes_correct": 3,
+        "ambiguous": 0,
+        "contract_ok": true,
+        "contract_reason": "",
+        "exact": true,
+        "edges_expected": null,
+        "edges_predicted": null,
+        "edges_correct": null,
+        "conditions_expected": null,
+        "conditions_predicted": null,
+        "conditions_correct": null
+      },
+      "response": {
+        "id": "c16f8a2f-4a1d-418a-a489-807c7ba32469",
+        "content": [
+          {
+            "text": "{\"intent\": \"order_status\", \"confidence\": 0.85, \"reasoning\": \"The user is asking to check facts about their existing order, specifically the item count and a product specification tied to that order.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"order_lookup\", \"quote\": \"check how many items I bought on order #W1067251\"}, {\"id\": \"t2\", \"kind\": \"product_info\", \"quote\": \"look up the size of grill variant 7848293342\"}, {\"id\": \"t3\", \"kind\": \"product_info\", \"quote\": \"look up the color of earbuds variant 6452271382\"}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 414,
+          "output_tokens": 150,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 256,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-d8418805fb3d",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.023896,
+        "actual_cny": 0.00203824,
+        "input_tokens_upper": 3756,
+        "max_tokens": 2048,
+        "input_tokens": 670,
+        "output_tokens": 150,
+        "input_tokens_main": 414,
+        "cache_read_tokens": 256,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "17ff85f53754e59e36f12cbdaac72ac596002ee632317842a010410f5ab916cd",
+        "request_bytes": 3244,
+        "latency_ms": 1387.8,
+        "error": null,
+        "created_at": "2026-11-20T09:05:45.717725+00:00",
+        "settled_at": "2026-11-20T09:05:47.106506+00:00"
+      }
+    },
+    {
+      "key": "H01",
+      "mode": "dag",
+      "status": "ok",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "order_lookup",
+          "quote": "check how many items I bought on order #W1067251",
+          "target": "W1067251",
+          "depends_on": [],
+          "output": "purchased_item_count"
+        },
+        {
+          "id": "t2",
+          "kind": "product_info",
+          "quote": "look up the size of grill variant 7848293342",
+          "target": "7848293342",
+          "depends_on": [
+            "t1"
+          ],
+          "output": "size",
+          "run_if": {
+            "source": "t1",
+            "quote": "If the order contains at least three items"
+          }
+        },
+        {
+          "id": "t3",
+          "kind": "product_info",
+          "quote": "look up the color of earbuds variant 6452271382",
+          "target": "6452271382",
+          "depends_on": [
+            "t1"
+          ],
+          "output": "color",
+          "run_if": {
+            "source": "t1",
+            "quote": "otherwise look up the color of earbuds variant 6452271382"
+          }
+        }
+      ],
+      "latency_ms": 1431.6593748517334,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 3,
+        "nodes_correct": 2,
+        "ambiguous": 0,
+        "contract_ok": false,
+        "contract_reason": "unverified_condition_quote",
+        "exact": false,
+        "edges_expected": 2,
+        "edges_predicted": 2,
+        "edges_correct": 0,
+        "conditions_expected": 2,
+        "conditions_predicted": 2,
+        "conditions_correct": 0,
+        "allowed_extra_edges": 0
+      },
+      "response": {
+        "id": "e9d19056-b22c-4df0-93cd-c9c6e22a489f",
+        "content": [
+          {
+            "text": "{\"intent\": \"order_status\", \"confidence\": 0.9, \"reasoning\": \"The user is asking to check facts about their existing order, including item count and a product specification, which is primarily an order status inquiry.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"order_lookup\", \"quote\": \"check how many items I bought on order #W1067251\", \"target\": \"W1067251\", \"depends_on\": [], \"output\": \"purchased_item_count\"}, {\"id\": \"t2\", \"kind\": \"product_info\", \"quote\": \"look up the size of grill variant 7848293342\", \"target\": \"7848293342\", \"depends_on\": [\"t1\"], \"output\": \"size\", \"run_if\": {\"source\": \"t1\", \"quote\": \"If the order contains at least three items\"}}, {\"id\": \"t3\", \"kind\": \"product_info\", \"quote\": \"look up the color of earbuds variant 6452271382\", \"target\": \"6452271382\", \"depends_on\": [\"t1\"], \"output\": \"color\", \"run_if\": {\"source\": \"t1\", \"quote\": \"otherwise look up the color of earbuds variant 6452271382\"}}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 202,
+          "output_tokens": 282,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 640,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-4c11ef30242d",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.025501999999999997,
+        "actual_cny": 0.0026856,
+        "input_tokens_upper": 4559,
+        "max_tokens": 2048,
+        "input_tokens": 842,
+        "output_tokens": 282,
+        "input_tokens_main": 202,
+        "cache_read_tokens": 640,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "1f174196a3f2c1a116403515131dc9de74324d697a2e80416ff51cb52d1eab07",
+        "request_bytes": 4047,
+        "latency_ms": 1427.6,
+        "error": null,
+        "created_at": "2026-11-20T09:05:47.111978+00:00",
+        "settled_at": "2026-11-20T09:05:48.541119+00:00"
+      }
+    },
+    {
+      "key": "H02",
+      "mode": "dag",
+      "status": "ok",
+      "subtasks": null,
+      "latency_ms": 997.9206670541316,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 0,
+        "nodes_correct": 0,
+        "ambiguous": 0,
+        "contract_ok": false,
+        "contract_reason": "invalid_task_list",
+        "exact": false,
+        "edges_expected": 2,
+        "edges_predicted": 0,
+        "edges_correct": 0,
+        "conditions_expected": 2,
+        "conditions_predicted": 0,
+        "conditions_correct": 0,
+        "allowed_extra_edges": 0
+      },
+      "response": {
+        "id": "02a6a80b-8416-4900-87d4-7f78ca7b1edc",
+        "content": [
+          {
+            "text": "{\"intent\": \"order_status\", \"confidence\": 0.9, \"reasoning\": \"The user is asking for recorded facts about their existing order, including item count and item specification, which is an order status inquiry.\"}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 583,
+          "output_tokens": 48,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 256,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-76cb2c1e963a",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.025506,
+        "actual_cny": 0.00156024,
+        "input_tokens_upper": 4561,
+        "max_tokens": 2048,
+        "input_tokens": 839,
+        "output_tokens": 48,
+        "input_tokens_main": 583,
+        "cache_read_tokens": 256,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "2281b23905fe688be684fb5546484bc293a0482dd7a3e679d65d0bd3aef5477c",
+        "request_bytes": 4049,
+        "latency_ms": 994.5,
+        "error": null,
+        "created_at": "2026-11-20T09:05:48.544333+00:00",
+        "settled_at": "2026-11-20T09:05:49.540088+00:00"
+      }
+    },
+    {
+      "key": "H02",
+      "mode": "subintent",
+      "status": "ok",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "order_lookup",
+          "quote": "Please get the number of items recorded on my receipt for #W1166549?"
+        },
+        {
+          "id": "t2",
+          "kind": "product_info",
+          "quote": "find the color of lamp variant 1569765161"
+        },
+        {
+          "id": "t3",
+          "kind": "product_info",
+          "quote": "find the color of kettle variant 5268233322"
+        }
+      ],
+      "latency_ms": 1102.4867498781532,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 3,
+        "nodes_correct": 3,
+        "ambiguous": 0,
+        "contract_ok": true,
+        "contract_reason": "",
+        "exact": true,
+        "edges_expected": null,
+        "edges_predicted": null,
+        "edges_correct": null,
+        "conditions_expected": null,
+        "conditions_predicted": null,
+        "conditions_correct": null
+      },
+      "response": {
+        "id": "99faa590-10c1-41fb-95cc-4a1f11be00d2",
+        "content": [
+          {
+            "text": "{\"intent\": \"order_status\", \"confidence\": 0.9, \"reasoning\": \"The user is asking for recorded facts about their existing order, including item count and a product variant specification, which is an order status inquiry.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"order_lookup\", \"quote\": \"Please get the number of items recorded on my receipt for #W1166549?\"}, {\"id\": \"t2\", \"kind\": \"product_info\", \"quote\": \"find the color of lamp variant 1569765161\"}, {\"id\": \"t3\", \"kind\": \"product_info\", \"quote\": \"find the color of kettle variant 5268233322\"}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 155,
+          "output_tokens": 153,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 512,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-810e99da6dad",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.023899999999999998,
+        "actual_cny": 0.00155448,
+        "input_tokens_upper": 3758,
+        "max_tokens": 2048,
+        "input_tokens": 667,
+        "output_tokens": 153,
+        "input_tokens_main": 155,
+        "cache_read_tokens": 512,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "99ee091901a6463907e1521d9e3ffd48800c33cf69831326ada238934f52293e",
+        "request_bytes": 3246,
+        "latency_ms": 1098.5,
+        "error": null,
+        "created_at": "2026-11-20T09:05:49.542363+00:00",
+        "settled_at": "2026-11-20T09:05:50.642465+00:00"
+      }
+    },
+    {
+      "key": "H03",
+      "mode": "subintent",
+      "status": "ok",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "product_info",
+          "quote": "First get the catalog variant IDs for coffee maker product 7996920482."
+        },
+        {
+          "id": "t2",
+          "kind": "order_lookup",
+          "quote": "Next use that list to identify the matching purchased item IDs on receipt #W1473345."
+        },
+        {
+          "id": "t3",
+          "kind": "product_info",
+          "quote": "Using the resulting item ID, look up the color of the matching coffee maker variant."
+        },
+        {
+          "id": "t4",
+          "kind": "order_lookup",
+          "quote": "Please give me its item ID and color."
+        }
+      ],
+      "latency_ms": 1419.9117908719927,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 4,
+        "nodes_correct": 3,
+        "ambiguous": 0,
+        "contract_ok": true,
+        "contract_reason": "",
+        "exact": false,
+        "edges_expected": null,
+        "edges_predicted": null,
+        "edges_correct": null,
+        "conditions_expected": null,
+        "conditions_predicted": null,
+        "conditions_correct": null
+      },
+      "response": {
+        "id": "7072ac99-3e8e-4072-870d-d96766ef8cd9",
+        "content": [
+          {
+            "text": "{\"intent\": \"order_status\", \"confidence\": 0.72, \"reasoning\": \"The user is asking to look up facts about their existing order/receipt, specifically the item ID and color of a purchased coffee maker, which is a recorded order fact rather than a policy question or action request.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"product_info\", \"quote\": \"First get the catalog variant IDs for coffee maker product 7996920482.\"}, {\"id\": \"t2\", \"kind\": \"order_lookup\", \"quote\": \"Next use that list to identify the matching purchased item IDs on receipt #W1473345.\"}, {\"id\": \"t3\", \"kind\": \"product_info\", \"quote\": \"Using the resulting item ID, look up the color of the matching coffee maker variant.\"}, {\"id\": \"t4\", \"kind\": \"order_lookup\", \"quote\": \"Please give me its item ID and color.\"}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 409,
+          "output_tokens": 209,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 256,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-da4c2bfaa498",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.02391,
+        "actual_cny": 0.00250024,
+        "input_tokens_upper": 3763,
+        "max_tokens": 2048,
+        "input_tokens": 665,
+        "output_tokens": 209,
+        "input_tokens_main": 409,
+        "cache_read_tokens": 256,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "1a621048caadcf7a90b642f7467d3f8a8211d5020aa7e8a88e292f5b712edfc1",
+        "request_bytes": 3251,
+        "latency_ms": 1414.7,
+        "error": null,
+        "created_at": "2026-11-20T09:05:50.645418+00:00",
+        "settled_at": "2026-11-20T09:05:52.062300+00:00"
+      }
+    },
+    {
+      "key": "H03",
+      "mode": "dag",
+      "status": "ok",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "product_info",
+          "quote": "get the catalog variant IDs for coffee maker product 7996920482",
+          "depends_on": [],
+          "target": "7996920482",
+          "output": "variants"
+        },
+        {
+          "id": "t2",
+          "kind": "order_lookup",
+          "quote": "use that list to identify the matching purchased item IDs on receipt #W1473345",
+          "depends_on": [
+            "t1"
+          ],
+          "target": "W1473345",
+          "output": "item_ids"
+        },
+        {
+          "id": "t3",
+          "kind": "product_info",
+          "quote": "look up the color of the matching coffee maker variant",
+          "depends_on": [
+            "t2"
+          ],
+          "output": "color"
+        }
+      ],
+      "latency_ms": 1271.7917920090258,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 3,
+        "nodes_correct": 2,
+        "ambiguous": 0,
+        "contract_ok": true,
+        "contract_reason": "",
+        "exact": false,
+        "edges_expected": 2,
+        "edges_predicted": 2,
+        "edges_correct": 0,
+        "conditions_expected": 0,
+        "conditions_predicted": 0,
+        "conditions_correct": 0,
+        "allowed_extra_edges": 0
+      },
+      "response": {
+        "id": "dc6ffc62-e0b2-4946-81c3-4a9f3e2bc04a",
+        "content": [
+          {
+            "text": "{\"intent\": \"order_status\", \"confidence\": 0.9, \"reasoning\": \"The user is asking to look up facts about their existing order/receipt, specifically item IDs and variant color, which is a recorded order fact lookup rather than a policy question or action request.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"product_info\", \"quote\": \"get the catalog variant IDs for coffee maker product 7996920482\", \"depends_on\": [], \"target\": \"7996920482\", \"output\": \"variants\"}, {\"id\": \"t2\", \"kind\": \"order_lookup\", \"quote\": \"use that list to identify the matching purchased item IDs on receipt #W1473345\", \"depends_on\": [\"t1\"], \"target\": \"W1473345\", \"output\": \"item_ids\"}, {\"id\": \"t3\", \"kind\": \"product_info\", \"quote\": \"look up the color of the matching coffee maker variant\", \"depends_on\": [\"t2\"], \"output\": \"color\"}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 197,
+          "output_tokens": 228,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 640,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-3d86f14fa55d",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.025515999999999997,
+        "actual_cny": 0.0022436,
+        "input_tokens_upper": 4566,
+        "max_tokens": 2048,
+        "input_tokens": 837,
+        "output_tokens": 228,
+        "input_tokens_main": 197,
+        "cache_read_tokens": 640,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "4b2debe64077f06d7ba375199fcc5dd0944877729d10677b98e2df26ba1ac679",
+        "request_bytes": 4054,
+        "latency_ms": 1267.2,
+        "error": null,
+        "created_at": "2026-11-20T09:05:52.066038+00:00",
+        "settled_at": "2026-11-20T09:05:53.335227+00:00"
+      }
+    },
+    {
+      "key": "H04",
+      "mode": "dag",
+      "status": "ok",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "product_info",
+          "quote": "get the catalog variant IDs for desk lamp product 6817146515",
+          "depends_on": [],
+          "target": "6817146515",
+          "output": "variants"
+        },
+        {
+          "id": "t2",
+          "kind": "order_lookup",
+          "quote": "get the purchased item IDs from receipt #W2015099",
+          "depends_on": [],
+          "target": "W2015099",
+          "output": "item_ids"
+        },
+        {
+          "id": "t3",
+          "kind": "product_info",
+          "quote": "look up the color of the matching desk lamp variant",
+          "depends_on": [
+            "t1",
+            "t2"
+          ],
+          "output": "color"
+        }
+      ],
+      "latency_ms": 1149.7209160588682,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 3,
+        "nodes_correct": 2,
+        "ambiguous": 0,
+        "contract_ok": true,
+        "contract_reason": "",
+        "exact": false,
+        "edges_expected": 2,
+        "edges_predicted": 2,
+        "edges_correct": 1,
+        "conditions_expected": 0,
+        "conditions_predicted": 0,
+        "conditions_correct": 0,
+        "allowed_extra_edges": 0
+      },
+      "response": {
+        "id": "3f21ffbf-3338-49db-af44-5496d9335bb6",
+        "content": [
+          {
+            "text": "{\"intent\": \"query\", \"confidence\": 0.72, \"reasoning\": \"The user is asking to look up catalog variant IDs and receipt item IDs to determine a product's color, which is a product information and lookup request rather than an action on an existing order or a refund.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"product_info\", \"quote\": \"get the catalog variant IDs for desk lamp product 6817146515\", \"depends_on\": [], \"target\": \"6817146515\", \"output\": \"variants\"}, {\"id\": \"t2\", \"kind\": \"order_lookup\", \"quote\": \"get the purchased item IDs from receipt #W2015099\", \"depends_on\": [], \"target\": \"W2015099\", \"output\": \"item_ids\"}, {\"id\": \"t3\", \"kind\": \"product_info\", \"quote\": \"look up the color of the matching desk lamp variant\", \"depends_on\": [\"t1\", \"t2\"], \"output\": \"color\"}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 581,
+          "output_tokens": 225,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 256,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-b10fe8eb2328",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.025498,
+        "actual_cny": 0.0029722399999999997,
+        "input_tokens_upper": 4557,
+        "max_tokens": 2048,
+        "input_tokens": 837,
+        "output_tokens": 225,
+        "input_tokens_main": 581,
+        "cache_read_tokens": 256,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "4eaf55c7056667ef8d3f2bfb4f96f32b7ebb3428fb0f4953d533c62af86c19b7",
+        "request_bytes": 4045,
+        "latency_ms": 1143.7,
+        "error": null,
+        "created_at": "2026-11-20T09:05:53.338354+00:00",
+        "settled_at": "2026-11-20T09:05:54.484436+00:00"
+      }
+    },
+    {
+      "key": "H04",
+      "mode": "subintent",
+      "status": "low_confidence",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "product_info",
+          "quote": "get the catalog variant IDs for desk lamp product 6817146515"
+        },
+        {
+          "id": "t2",
+          "kind": "order_lookup",
+          "quote": "get the purchased item IDs from receipt #W2015099"
+        },
+        {
+          "id": "t3",
+          "kind": "product_info",
+          "quote": "look up the color of the matching desk lamp variant"
+        }
+      ],
+      "latency_ms": 1176.6392500139773,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 3,
+        "nodes_correct": 3,
+        "ambiguous": 0,
+        "contract_ok": true,
+        "contract_reason": "",
+        "exact": true,
+        "edges_expected": null,
+        "edges_predicted": null,
+        "edges_correct": null,
+        "conditions_expected": null,
+        "conditions_predicted": null,
+        "conditions_correct": null
+      },
+      "response": {
+        "id": "e13af73a-564c-43b8-8512-a5b6728df36e",
+        "content": [
+          {
+            "text": "{\"intent\": \"query\", \"confidence\": 0.6, \"reasoning\": \"The user is asking for catalog variant IDs and receipt item lookups to determine a product's color, which is a product information/policy-style query rather than an action on their own order.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"product_info\", \"quote\": \"get the catalog variant IDs for desk lamp product 6817146515\"}, {\"id\": \"t2\", \"kind\": \"order_lookup\", \"quote\": \"get the purchased item IDs from receipt #W2015099\"}, {\"id\": \"t3\", \"kind\": \"product_info\", \"quote\": \"look up the color of the matching desk lamp variant\"}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 153,
+          "output_tokens": 159,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 512,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-c9e4aa8e0bf4",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.023892,
+        "actual_cny": 0.00159848,
+        "input_tokens_upper": 3754,
+        "max_tokens": 2048,
+        "input_tokens": 665,
+        "output_tokens": 159,
+        "input_tokens_main": 153,
+        "cache_read_tokens": 512,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "8e146beca0421dbc894c428802d6d8169c78e6ce581974fd0d4680ec6d53c00a",
+        "request_bytes": 3242,
+        "latency_ms": 1171.7,
+        "error": null,
+        "created_at": "2026-11-20T09:05:54.488820+00:00",
+        "settled_at": "2026-11-20T09:05:55.662187+00:00"
+      }
+    },
+    {
+      "key": "H05",
+      "mode": "subintent",
+      "status": "ok",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "product_info",
+          "quote": "check the ventilation level of helmet variant 3339188619"
+        },
+        {
+          "id": "t2",
+          "kind": "return_change",
+          "quote": "prepare a return of item 3339188619 from order #W1809337 to paypal_1679017"
+        },
+        {
+          "id": "t3",
+          "kind": "order_lookup",
+          "quote": "check the current status of order #W1809337"
+        }
+      ],
+      "latency_ms": 1600.7451659534127,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 3,
+        "nodes_correct": 3,
+        "ambiguous": 0,
+        "contract_ok": true,
+        "contract_reason": "",
+        "exact": true,
+        "edges_expected": null,
+        "edges_predicted": null,
+        "edges_correct": null,
+        "conditions_expected": null,
+        "conditions_predicted": null,
+        "conditions_correct": null
+      },
+      "response": {
+        "id": "02201323-15e9-45c0-9eeb-a62c671e119a",
+        "content": [
+          {
+            "text": "{\"intent\": \"refund\", \"confidence\": 0.72, \"reasoning\": \"The user explicitly requests preparing a return of an item from an order, which is a return/refund action, though it is conditional on checking ventilation level.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"product_info\", \"quote\": \"check the ventilation level of helmet variant 3339188619\"}, {\"id\": \"t2\", \"kind\": \"return_change\", \"quote\": \"prepare a return of item 3339188619 from order #W1809337 to paypal_1679017\"}, {\"id\": \"t3\", \"kind\": \"order_lookup\", \"quote\": \"check the current status of order #W1809337\"}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 432,
+          "output_tokens": 165,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 256,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-19b22c9c0a56",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.02407,
+        "actual_cny": 0.0021942399999999996,
+        "input_tokens_upper": 3843,
+        "max_tokens": 2048,
+        "input_tokens": 688,
+        "output_tokens": 165,
+        "input_tokens_main": 432,
+        "cache_read_tokens": 256,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "93fdcb688c735020b9584f2f47fc5cac3a38212f0ebafa49c9c811ef98af897f",
+        "request_bytes": 3331,
+        "latency_ms": 1594.2,
+        "error": null,
+        "created_at": "2026-11-20T09:05:55.667688+00:00",
+        "settled_at": "2026-11-20T09:05:57.264115+00:00"
+      }
+    },
+    {
+      "key": "H05",
+      "mode": "dag",
+      "status": "ok",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "product_info",
+          "quote": "check the ventilation level of helmet variant 3339188619",
+          "target": "3339188619",
+          "depends_on": []
+        },
+        {
+          "id": "t2",
+          "kind": "return_change",
+          "quote": "prepare a return of item 3339188619 from order #W1809337 to paypal_1679017",
+          "target": "3339188619",
+          "depends_on": [
+            "t1"
+          ],
+          "run_if": {
+            "source": "t1",
+            "quote": "If the ventilation level is low"
+          }
+        },
+        {
+          "id": "t3",
+          "kind": "order_lookup",
+          "quote": "check the current status of order #W1809337",
+          "target": "W1809337",
+          "depends_on": [
+            "t1"
+          ],
+          "run_if": {
+            "source": "t1",
+            "quote": "otherwise check the current status of order #W1809337"
+          }
+        }
+      ],
+      "latency_ms": 1356.6666669212282,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 3,
+        "nodes_correct": 0,
+        "ambiguous": 0,
+        "contract_ok": false,
+        "contract_reason": "unverified_condition_quote",
+        "exact": false,
+        "edges_expected": 2,
+        "edges_predicted": 2,
+        "edges_correct": 0,
+        "conditions_expected": 2,
+        "conditions_predicted": 2,
+        "conditions_correct": 0,
+        "allowed_extra_edges": 0
+      },
+      "response": {
+        "id": "9c566d1f-e106-4325-9e2b-a21edad8ab83",
+        "content": [
+          {
+            "text": "{\"intent\": \"refund\", \"confidence\": 0.72, \"reasoning\": \"The user's main goal is to conditionally prepare a return of an item from an order, which is an explicit return/refund action, while also requesting order status and product info as supporting steps.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"product_info\", \"quote\": \"check the ventilation level of helmet variant 3339188619\", \"target\": \"3339188619\", \"depends_on\": []}, {\"id\": \"t2\", \"kind\": \"return_change\", \"quote\": \"prepare a return of item 3339188619 from order #W1809337 to paypal_1679017\", \"target\": \"3339188619\", \"depends_on\": [\"t1\"], \"run_if\": {\"source\": \"t1\", \"quote\": \"If the ventilation level is low\"}}, {\"id\": \"t3\", \"kind\": \"order_lookup\", \"quote\": \"check the current status of order #W1809337\", \"target\": \"W1809337\", \"depends_on\": [\"t1\"], \"run_if\": {\"source\": \"t1\", \"quote\": \"otherwise check the current status of order #W1809337\"}}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 220,
+          "output_tokens": 277,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 640,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-2810f318ff3d",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.025675999999999997,
+        "actual_cny": 0.0026815999999999997,
+        "input_tokens_upper": 4646,
+        "max_tokens": 2048,
+        "input_tokens": 860,
+        "output_tokens": 277,
+        "input_tokens_main": 220,
+        "cache_read_tokens": 640,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "c409b72448383046d1bbf9a036bd9af8662a877643729a499300866ebde4601e",
+        "request_bytes": 4134,
+        "latency_ms": 1351.6,
+        "error": null,
+        "created_at": "2026-11-20T09:05:57.268311+00:00",
+        "settled_at": "2026-11-20T09:05:58.622011+00:00"
+      }
+    },
+    {
+      "key": "H06",
+      "mode": "dag",
+      "status": "ok",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "product_info",
+          "quote": "check the ventilation level of helmet variant 5537798301",
+          "target": "5537798301",
+          "depends_on": []
+        },
+        {
+          "id": "t2",
+          "kind": "return_change",
+          "quote": "prepare a return of item 5537798301 from order #W1355800 to credit_card_3566337",
+          "target": "5537798301",
+          "depends_on": [
+            "t1"
+          ],
+          "run_if": {
+            "source": "t1",
+            "quote": "If the ventilation level is low"
+          }
+        },
+        {
+          "id": "t3",
+          "kind": "order_lookup",
+          "quote": "check the current status of order #W1355800",
+          "target": "W1355800",
+          "depends_on": [
+            "t1"
+          ],
+          "run_if": {
+            "source": "t1",
+            "quote": "otherwise check the current status of order #W1355800"
+          }
+        }
+      ],
+      "latency_ms": 1432.436249917373,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 3,
+        "nodes_correct": 0,
+        "ambiguous": 0,
+        "contract_ok": false,
+        "contract_reason": "unverified_condition_quote",
+        "exact": false,
+        "edges_expected": 2,
+        "edges_predicted": 2,
+        "edges_correct": 0,
+        "conditions_expected": 2,
+        "conditions_predicted": 2,
+        "conditions_correct": 0,
+        "allowed_extra_edges": 0
+      },
+      "response": {
+        "id": "da3f26db-05c7-4a62-8089-43a1126e801b",
+        "content": [
+          {
+            "text": "{\"intent\": \"refund\", \"confidence\": 0.72, \"reasoning\": \"The user's main goal is to conditionally prepare a return of an item from an order, which is an explicit return/refund action, while also requesting order status and product info as supporting steps.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"product_info\", \"quote\": \"check the ventilation level of helmet variant 5537798301\", \"target\": \"5537798301\", \"depends_on\": []}, {\"id\": \"t2\", \"kind\": \"return_change\", \"quote\": \"prepare a return of item 5537798301 from order #W1355800 to credit_card_3566337\", \"target\": \"5537798301\", \"depends_on\": [\"t1\"], \"run_if\": {\"source\": \"t1\", \"quote\": \"If the ventilation level is low\"}}, {\"id\": \"t3\", \"kind\": \"order_lookup\", \"quote\": \"check the current status of order #W1355800\", \"target\": \"W1355800\", \"depends_on\": [\"t1\"], \"run_if\": {\"source\": \"t1\", \"quote\": \"otherwise check the current status of order #W1355800\"}}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 604,
+          "output_tokens": 277,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 256,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-728dd5588738",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.025686,
+        "actual_cny": 0.00343424,
+        "input_tokens_upper": 4651,
+        "max_tokens": 2048,
+        "input_tokens": 860,
+        "output_tokens": 277,
+        "input_tokens_main": 604,
+        "cache_read_tokens": 256,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "9b3aabf0a18b093fe657274d54cca321a81ca308ea6cc70795a6ac4427926e15",
+        "request_bytes": 4139,
+        "latency_ms": 1427.5,
+        "error": null,
+        "created_at": "2026-11-20T09:05:58.625727+00:00",
+        "settled_at": "2026-11-20T09:06:00.055150+00:00"
+      }
+    },
+    {
+      "key": "H06",
+      "mode": "subintent",
+      "status": "low_confidence",
+      "subtasks": [
+        {
+          "id": "t1",
+          "kind": "product_info",
+          "quote": "check the ventilation level of helmet variant 5537798301"
+        },
+        {
+          "id": "t2",
+          "kind": "return_change",
+          "quote": "prepare a return of item 5537798301 from order #W1355800 to credit_card_3566337"
+        },
+        {
+          "id": "t3",
+          "kind": "order_lookup",
+          "quote": "check the current status of order #W1355800"
+        }
+      ],
+      "latency_ms": 1282.0208750199527,
+      "grade": {
+        "nodes_expected": 3,
+        "nodes_predicted": 3,
+        "nodes_correct": 3,
+        "ambiguous": 0,
+        "contract_ok": true,
+        "contract_reason": "",
+        "exact": true,
+        "edges_expected": null,
+        "edges_predicted": null,
+        "edges_correct": null,
+        "conditions_expected": null,
+        "conditions_predicted": null,
+        "conditions_correct": null
+      },
+      "response": {
+        "id": "4a1f207a-28a2-47ae-b947-880f66da1e35",
+        "content": [
+          {
+            "text": "{\"intent\": \"refund\", \"confidence\": 0.6, \"reasoning\": \"The user conditionally requests preparing a return of an item from an order, which is an explicit return action, though it is gated on a product spec check and confirmation.\", \"subtasks\": [{\"id\": \"t1\", \"kind\": \"product_info\", \"quote\": \"check the ventilation level of helmet variant 5537798301\"}, {\"id\": \"t2\", \"kind\": \"return_change\", \"quote\": \"prepare a return of item 5537798301 from order #W1355800 to credit_card_3566337\"}, {\"id\": \"t3\", \"kind\": \"order_lookup\", \"quote\": \"check the current status of order #W1355800\"}]}",
+            "type": "text"
+          }
+        ],
+        "model": "deepseek-flash",
+        "role": "assistant",
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "type": "message",
+        "usage": {
+          "input_tokens": 176,
+          "output_tokens": 168,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 512,
+          "service_tier": "standard"
+        }
+      },
+      "ledger": {
+        "request_id": "req-1d8bc256fad9",
+        "stage": "intent",
+        "model": "deepseek-flash",
+        "status": "success",
+        "reserved_cny": 0.024079999999999997,
+        "actual_cny": 0.00171648,
+        "input_tokens_upper": 3848,
+        "max_tokens": 2048,
+        "input_tokens": 688,
+        "output_tokens": 168,
+        "input_tokens_main": 176,
+        "cache_read_tokens": 512,
+        "cache_write_tokens": 0,
+        "usage_present": 1,
+        "bound_violation": null,
+        "request_sha256": "92dbd0212c2a67f7d9772f1b29c3e6748bf746c7335ba02bfac1a41e0ed94411",
+        "request_bytes": 3336,
+        "latency_ms": 1277.7,
+        "error": null,
+        "created_at": "2026-11-20T09:06:00.058880+00:00",
+        "settled_at": "2026-11-20T09:06:01.338576+00:00"
+      }
+    }
+  ]
+}
