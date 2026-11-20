@@ -144,10 +144,12 @@ class ContextEngine:
         ratio = float(cstate.get("chars_per_token") or DEFAULT_CHARS_PER_TOKEN)
         return int(_chars(messages) / max(ratio, 0.5))
 
-    async def prepare(self, client: str, conv: str, turn: int) -> Dict[str, Any]:
+    async def prepare(self, client: str, conv: str, turn: int, *, rows=None, cstate=None) -> Dict[str, Any]:
         """本轮开始前检查历史预算；超出时持久化压缩。返回压缩记录（无压缩为空）。"""
-        rows = self.store.conversation_log(client, conv)
-        cstate = self.store.context_state(client, conv)
+        if rows is None:
+            rows = self.store.conversation_log(client, conv)
+        if cstate is None:
+            cstate = self.store.context_state(client, conv)
         everything = {"*"}
         tokens = self.estimate_tokens(self._render(rows, cstate, everything), cstate)
         if tokens <= self.budget_tokens:

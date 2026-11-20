@@ -338,6 +338,7 @@ class RetailService:
         fact_client: Any = None,
         publish_revision: bool = False,
         plan_client: Any = None,
+        task_context_enabled: bool = False,
     ):
         self.store = store
         # 为空时不维护请求清单（消融对照）。
@@ -349,6 +350,7 @@ class RetailService:
         self.skill_library = skill_library
         # 为空时沿用两轮可见窗口（消融对照）；否则由完整消息日志编排上下文。
         self.context_engine = context_engine
+        self.task_context_enabled = task_context_enabled
         self.agent = agent
         # 为空时不调用分类器，执行时由业务库按规则判断确认。
         self.confirmation_client = confirmation_client
@@ -655,6 +657,13 @@ class RetailService:
 
             # 供转人工提醒与路由使用；只含仍未完成的请求。
             request.retail_plan = open_goals(plan)
+        task_history = None
+        guard_order_ids = None
+        if (engine is not None and self.task_context_enabled
+                and getattr(getattr(self.agent, "orchestrator", None), "routing_mode", None) == "dag"):
+            task_history = [row for row in self.store.conversation_log(client_user_id, conv_id)
+                            if row["turn"] < turn]
+            guard_order_ids = self._user_order_ids(client_user_id, conv_id, message, rows=task_history)
         if self.publish_revision:
             def publish_check(text, traces):
                 pending_now = self.store.active_pending(client_user_id, conv_id)
@@ -665,15 +674,26 @@ class RetailService:
                     events=[e for e in session if int(e["event_id"]) > first_event_id],
                     pending_before=pending_before, pending_after=pending_now, turn=turn, bound_user_id=bound_now,
                     language=self.language, session_events=session,
-                    user_order_ids=self._user_order_ids(client_user_id, conv_id, message))
+                    user_order_ids=guard_order_ids if guard_order_ids is not None else
+                    self._user_order_ids(client_user_id, conv_id, message))
                 return list(checked.record.get("findings") or [])
 
             request.publish_check = publish_check
         if self.skill_library is not None:
             request.retail_skills = self.skill_library
-            request.loaded_skills = self._loaded_skills(client_user_id, conv_id)
+            request.loaded_skills = self._loaded_skills(client_user_id, conv_id, task_history)
         if engine is not None:
-            compaction = await engine.prepare(client_user_id, conv_id, turn)
+            if task_history is None:
+                compaction = await engine.prepare(client_user_id, conv_id, turn)
+            else:
+                from core.task_context import TaskContextCompiler
+
+                cstate = self.store.context_state(client_user_id, conv_id)
+                compaction = await engine.prepare(client_user_id, conv_id, turn, rows=task_history, cstate=cstate)
+                request.task_compiler = TaskContextCompiler(
+                    self.store, client_user_id, conv_id, turn, bound_user_id, message,
+                    task_history, cstate, engine.keep_recent_turns)
+
             state: Dict[str, Any] = {"turn": turn, "bound_user_id": bound_user_id,
                                      "pending_confirmation": pending_brief, "task": request.retail_task,
                                      "recent_events": [{"kind": e["event_type"], "order_id": e.get("order_id"),
@@ -722,6 +742,7 @@ class RetailService:
             "analysis": analysis,
             "request": request,
             "user_content": user_content,
+            "guard_order_ids": guard_order_ids,
             "turn_extra": turn_extra if engine is not None else [],
             "compaction": {**compaction, **({"facts_update": facts_update} if facts_update else {}),
                            **({"plan_update": plan_update} if plan_update else {})},
@@ -800,7 +821,8 @@ class RetailService:
             pending_before=pending_before, pending_after=pending_after, turn=turn,
             bound_user_id=current_bound_user,
             session_events=self.store.list_events(client_user_id, conv_id),
-            user_order_ids=self._user_order_ids(client_user_id, conv_id, message),
+            user_order_ids=context["guard_order_ids"] if context.get("guard_order_ids") is not None else
+            self._user_order_ids(client_user_id, conv_id, message),
             return_basis=return_basis, dag_confirmation_basis=request.dag_confirmation_basis,
             dag_post_write=request.dag_post_write,
             language=self.language,
@@ -1001,10 +1023,12 @@ class RetailService:
             context["event"] = event
         return result
 
-    def _loaded_skills(self, client_user_id, conv_id) -> List[str]:
+    def _loaded_skills(self, client_user_id, conv_id, rows=None) -> List[str]:
         """本会话此前成功加载过的 Skill；只来自消息日志中的真实工具结果。"""
         names: List[str] = []
-        for row in self.store.conversation_log(client_user_id, conv_id):
+        if rows is None:
+            rows = self.store.conversation_log(client_user_id, conv_id)
+        for row in rows:
             if row["kind"] != "tool_result":
                 continue
             for block in row["content"]:
@@ -1017,13 +1041,15 @@ class RetailService:
                         names.append(value["skill"])
         return names
 
-    def _user_order_ids(self, client_user_id, conv_id, message) -> set:
+    def _user_order_ids(self, client_user_id, conv_id, message, rows=None) -> set:
         """本会话用户消息中出现过的订单号（含本轮），只用于允许复述，不作为订单事实证据。"""
         from agents.retail_response_guard import _ORDER_ID, _order_id
 
         texts = [message] + [h["content"] for h in self.store.visible_history(client_user_id, conv_id)
                              if h.get("role") == "user"]
-        for row in self.store.conversation_log(client_user_id, conv_id):
+        if rows is None:
+            rows = self.store.conversation_log(client_user_id, conv_id)
+        for row in rows:
             if row["kind"] == "user":
                 texts += [b.get("text", "") for b in row["content"] if b.get("type") == "text"]
         return {_order_id(m.group()) for text in texts for m in _ORDER_ID.finditer(text or "")}

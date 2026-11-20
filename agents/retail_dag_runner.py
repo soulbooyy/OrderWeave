@@ -11,6 +11,8 @@ from core.retail_dag import Status
 from core.intent_recognizer import IntentCategory
 from core.retail_dag_evidence import verify
 from core.retail_subtasks import OWNERS, PRIVATE, WRITES
+from core.dag_planning import target_outputs
+from core.task_context import choice_value, reference_type, target_type, verified_entity
 from mcp_tools.retail_domain import WRITE_KINDS
 
 
@@ -52,6 +54,7 @@ class DagRunner:
                 if state.operation:
                     store.cancel_dag_operation(req.user_id, req.conv_id, state.operation["op_id"])
                     req.retail_pending = [p for p in req.retail_pending if p["op_id"] != state.operation["op_id"]]
+                state.selected.clear()
                 state.stop = "binding_changed"
                 driver.save()
                 continue
@@ -120,9 +123,24 @@ class DagRunner:
                 choices = waiting.facts.get("choices", [])
                 task = next(t for t in state.plan.nodes if t.id == waiting.task_id)
                 valid_id = (r"#W[0-9]+" if task.kind in PRIVATE else r"[0-9]{6,16}")
-                if (choices and text not in choices) or (not choices and not re.fullmatch(valid_id, text)):
+                typ = target_type(task.kind, task.output)
+                scoped_choice = req.task_compiler or driver.reference_needed(task)
+                answer = choice_value(typ, text) if scoped_choice else text
+                if req.task_compiler and choices:
+                    choices = [v for v in choices if req.task_compiler.record(typ, v, req.retail_user_id)]
+                    if choices != waiting.facts["choices"]:
+                        waiting.facts["choices"] = choices
+                        driver.save()
+                if choices and answer not in choices:
+                    if req.task_compiler and answer:
+                        return driver
                     continue
-                state.selected[waiting.task_id] = text
+                if not choices and not re.fullmatch(valid_id, answer or ""):
+                    continue
+                if (typ and scoped_choice
+                        and not verified_entity(store, req.user_id, req.conv_id, typ, answer, req.retail_user_id)):
+                    return driver
+                state.selected[waiting.task_id] = answer
             elif waiting.reason == "identity_required":
                 if req.retail_user_id and text.lower() not in {"continue", "继续"} and not re.fullmatch(
                         r"[^\s@]+@[^\s@]+\.[^\s@]+", text):
@@ -198,6 +216,43 @@ class DagRunner:
         if self.req.retail_store is not None:
             self.req.retail_store.save_dag(self.state)
 
+    def reference_needed(self, task):
+        if task.target:
+            return ""
+        sources = target_outputs(task.kind, task.output)
+        if any(parent.id in task.depends_on and parent.output in sources for parent in self.state.plan.nodes):
+            return ""
+        return reference_type(task.kind, task.output, task.quote)
+
+    def resolve_reference(self, task, typ):
+        req = self.req
+        compiler = req.task_compiler
+        selected = self.state.selected.get(task.id)
+        candidates = compiler.candidates(typ, req.retail_user_id) if compiler else []
+        if selected:
+            explicit = choice_value(typ, req.message) == selected
+            if (selected in candidates or explicit) and verified_entity(
+                    req.retail_store, req.user_id, req.conv_id, typ, selected, req.retail_user_id):
+                if compiler:
+                    compiler.note_resolution(task, typ, selected)
+                return selected
+            self.discard_selection(task)
+        elif len(candidates) == 1:
+            target = self.state.selected[task.id] = candidates[0]
+            compiler.note_resolution(task, typ, target)
+            return target
+        self.wait(task, "choose_target", candidates)
+        return ""
+
+    def discard_selection(self, task):
+        self.state.selected.pop(task.id, None)
+        if self.state.operation:
+            req = self.req
+            op_id = self.state.operation["op_id"]
+            req.retail_store.cancel_dag_operation(req.user_id, req.conv_id, op_id)
+            req.retail_pending = [op for op in req.retail_pending if op["op_id"] != op_id]
+            self.state.operation = {}
+
     def next_role(self):
         while task := self.state.next_node(self.req.turn):
             run = self.state.runs[task.id]
@@ -208,6 +263,16 @@ class DagRunner:
             if task.kind in PRIVATE and not self.req.retail_user_id:
                 self.wait(task, "identity_required")
                 break
+            compiler = self.req.task_compiler
+            if compiler and self.req.retail_store.bound_user_id(self.req.user_id, self.req.conv_id) != self.req.retail_user_id:
+                run.move(Status.BLOCKED, reason="binding_changed")
+                self.state.stop = "binding_changed"
+                break
+            typ = self.reference_needed(task)
+            if typ:
+                target = self.resolve_reference(task, typ)
+                if not target:
+                    break
             if choices is None:
                 run.move(Status.BLOCKED, reason="no_matching_target")
                 continue
@@ -222,6 +287,13 @@ class DagRunner:
             scope = replace(self.req, dag_assignment={"id": task.id, "kind": task.kind}, dispatch_role=role.value,
                             dag_tool_limit=TASK_TOOLS[task.kind])
             available = actor._tools_for_request(scope)
+            if (compiler and task.kind not in PRIVATE and any(
+                    other.kind in PRIVATE and other.quote in task.quote for other in self.state.plan.nodes)):
+                run.move(Status.BLOCKED, reason="quote_scope")
+                continue
+            if compiler and not compiler.permits_inputs(self.state, task, available, target):
+                run.move(Status.BLOCKED, reason="dependency_scope")
+                continue
             if task.kind in WRITES:
                 required = WRITE_KINDS.keys() & TASK_TOOLS[task.kind]
                 if self.state.operation:
@@ -235,6 +307,12 @@ class DagRunner:
             if required.isdisjoint(available):
                 run.move(Status.BLOCKED, reason="capability_unavailable")
                 continue
+            if (compiler and task.kind in WRITES and not self.state.operation and compiler.wants_saved_color(task)
+                    and ("get_order_details" not in available or not compiler.write_preference(task, target))):
+                # A bare color reply cannot safely reconstruct item and operation arguments.
+                # Ask for a fresh explicit request, which the planner validates normally.
+                self.wait(task, "specify_change")
+                break
             self.task = task
             run.claim(role.value, self.req.turn)
             self.save()
@@ -260,6 +338,31 @@ class DagRunner:
         req, task = self.req, self.task
         run = self.state.runs[task.id]
         target, _ = self.state.target(task)
+        if req.task_compiler:
+            store = req.retail_store
+            problem = ""
+            if store.bound_user_id(req.user_id, req.conv_id) != req.retail_user_id:
+                problem = "binding_changed"
+            elif task.id in self.state.selected and not req.task_compiler.record(
+                    target_type(task.kind, task.output), target, req.retail_user_id):
+                self.discard_selection(task)
+                self.wait(task, "choose_target")
+                self.save()
+                return
+            elif self.state.operation and task.kind in WRITES:
+                expected = self.state.operation
+                pending = store.active_pending(req.user_id, req.conv_id)
+                if not any(op["status"] == "displayed" and op["displayed_turn"] < req.turn
+                           and op["retail_user_id"] == req.retail_user_id
+                           and store.prepared_for_task(self.state.plan.id, task.id, op["prepared_turn"]) == op["op_id"]
+                           and all(op[key] == expected[key] for key in ("op_id", "kind", "args"))
+                           for op in pending):
+                    problem = "operation_changed"
+            if problem:
+                run.move(Status.BLOCKED, reason=problem)
+                self.state.stop = problem
+                self.save()
+                return
         assignment = {"id": task.id, "kind": task.kind, "quote": task.quote, "output": task.output,
                       "target": target, "inputs": self.state.inputs(task)}
         assignment["input_refs"] = {key: list(self.state.runs[key].refs) for key in assignment["inputs"]}
@@ -269,8 +372,11 @@ class DagRunner:
         # Each node gets a fresh view. The tool wrappers still see the real user
         # message, session binding and shared confirmation guard.
         def view(agent, tools):
+            packet = task_context(assignment, req)
+            if req.task_compiler:
+                return req.task_compiler.compile(req, task, agent.agent_type.value, tools, packet).messages()
             return [{"role": "user", "content": [{"type": "text", "text": json.dumps(
-                task_context(assignment, req), ensure_ascii=False)}]}]
+                packet, ensure_ascii=False)}]}]
         scoped = replace(req, dag_assignment=assignment, dag_tool_limit=TASK_TOOLS[task.kind],
                          dispatch_role=run.role, context_view=view, context="", history=[], entities={},
                          dag_ticket=(self.state.plan.id, task.id, self.state.revision, req.turn),
@@ -338,6 +444,9 @@ class DagRunner:
         if self.state.stop == "choose_target":
             choices = next((r.facts.get("choices") for r in runs if r.status == Status.WAITING_USER), ())
             self.note = ("Please specify the target ID: " if self.router.language == "en" else "请指定目标编号：") + ", ".join(choices or ())
+        elif self.state.stop == "specify_change":
+            self.note = ("Please restate the change with the order, item and desired color."
+                         if self.router.language == "en" else "请重新说明要更改的订单、商品及目标颜色。")
         elif self.state.stop == "identity_required":
             self.note = ("Please provide your email to verify your identity." if self.router.language == "en"
                          else "请提供本人邮箱以核实身份。")

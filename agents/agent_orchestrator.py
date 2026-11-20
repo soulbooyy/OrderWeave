@@ -211,6 +211,7 @@ class Request:
     dag_confirmation_basis: Optional[tuple[str, str]] = None
     dag_tool_limit: Optional[frozenset[str]] = None
     catalog_steps: dict = field(default_factory=dict)
+    task_compiler: Optional[Any] = None
 
 
 @dataclass
@@ -340,11 +341,11 @@ class BaseAgent:
                 knowledge_hits=knowledge_hits,
             )
 
-    def _initial_messages(self, req: Request) -> List[Dict[str, Any]]:
+    def _initial_messages(self, req: Request, tools=None) -> List[Dict[str, Any]]:
         """本轮起始消息。零售路径由上下文编排器提供完整历史；旧模式沿用背景／契约消息对。"""
         compiled = getattr(req, "context_view", None)
         if compiled is not None:
-            return compiled(self, self._tools_for_request(req))
+            return compiled(self, self._tools_for_request(req) if tools is None else tools)
 
         def _clean(s: str) -> str:
             return s.encode("utf-8", errors="ignore").decode("utf-8")
@@ -395,7 +396,7 @@ class BaseAgent:
         tools = self._tools_for_request(req)
         try:
             out = await run_tool_loop(
-                self, req, self._initial_messages(req), tools, self._loop_hooks(req),
+                self, req, self._initial_messages(req, tools), tools, self._loop_hooks(req),
                 system=self._build_system_prompt(req), stop_check=_request_stop,
             )
         except LoopError as ex:
@@ -1187,7 +1188,8 @@ class AgentOrchestrator:
                             "Previous verified order lookup and deferred catalog requests: " + json.dumps(req.catalog_steps, ensure_ascii=False)
                             + ". Use this only for context. Quote actions from the current message."}]
                     intent_result = await self._intent_recognizer.recognize(
-                        req.message, history=recognition_history
+                        req.message, history=recognition_history,
+                        **({"task_compiler": req.task_compiler} if req.task_compiler else {}),
                     )
                 if retail_mode and self.routing_mode == "dag":
                     diagnostics = getattr(intent_result, "diagnostics", {})

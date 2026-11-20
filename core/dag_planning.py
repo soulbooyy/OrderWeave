@@ -23,7 +23,13 @@ def reject(code, path, message):
     raise PlanError("semantic_error", [dict(code=code, path=path, reason=message)])
 
 
-def compile_nodes(data, message):
+def target_outputs(kind, output):
+    if kind == "product_info":
+        return set() if output == "variants" else {"item_ids", "variants"}
+    return {"order_id"}
+
+
+def compile_nodes(data, message, *, task_compiler=None):
     rows = data["subtasks"]
     if not rows:
         if CONDITION_MARKER.search(message) or data["intent"] in {"order_status", "refund"}:
@@ -64,10 +70,9 @@ def compile_nodes(data, message):
             if label and (row["output"] == "variants") != (label[0].lower().startswith(("product", "商品"))):
                 reject("wrong_catalog_target", path+".target", "Use the product for variants and the variant for its specification.")
         if not target and kind not in {"return_policy", "general_policy"}:
-            allowed = {"item_ids", "variants"} if kind == "product_info" and row["output"] != "variants" else {"order_id"}
-            if kind == "product_info" and row["output"] == "variants":
-                allowed = set()
-            if not any(producers.get(p) in allowed for p in row["depends_on"]):
+            allowed = target_outputs(kind, row["output"])
+            has_source = any(producers.get(p) in allowed for p in row["depends_on"])
+            if not has_source and not (task_compiler and task_compiler.supports(kind, row["output"], quote)):
                 reject("unbound_target", path+".target", "Supply a literal target or a compatible direct predecessor.")
         guard = row.get("run_if")
         if guard is None:
@@ -119,7 +124,7 @@ def unique_keys(pairs):
     return result
 
 
-def parse_plan(raw, message):
+def parse_plan(raw, message, *, task_compiler=None):
     try:
         obj = json.loads(raw, object_pairs_hook=unique_keys, parse_constant=invalid_constant)
     except (ValueError, RecursionError) as exc:
@@ -135,7 +140,7 @@ def parse_plan(raw, message):
                 del loc[2]
             issues.append(dict(code=error["type"], path=".".join(map(str,loc)) or "$", reason=error["msg"]))
         raise PlanError("structure_error", issues) from exc
-    compile_nodes(data, message)
+    compile_nodes(data, message, task_compiler=task_compiler)
     return data
 
 

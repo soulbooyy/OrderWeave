@@ -378,13 +378,18 @@ class IntentRecognizer:
         self,
         message: str,
         history: Optional[List[Dict[str, str]]] = None,
+        *, task_compiler=None,
     ) -> IntentResult:
         """识别用户意图。
 
         history 格式：[{"role": "user"/"assistant", "content": "..."}]。
         """
+        # Ordinary requests retain the existing planner cache. Reference plans are
+        # revalidated against the current turn rather than shared across sessions.
+        if task_compiler and not task_compiler.has_reference:
+            task_compiler = None
         key = self._cache_key(message, history)
-        if key in self._cache:
+        if task_compiler is None and key in self._cache:
             self.cache_hits += 1
             return self._cache[key]
         self.cache_misses += 1
@@ -392,7 +397,8 @@ class IntentRecognizer:
         t0 = time.monotonic()
 
         # LLM 与 Embedding 分支并发执行；禁用时跳过 Embedding。
-        llm_task = asyncio.create_task(self._llm_recognize(message, history))
+        llm_task = asyncio.create_task(self._llm_recognize(
+            message, history, **({"task_compiler": task_compiler} if task_compiler else {})))
         emb_task = asyncio.create_task(self._embedding_recognize(message)) if self._embedding_enabled else None
         pat      = self._pattern_recognize(message)
         if emb_task:
@@ -457,7 +463,7 @@ class IntentRecognizer:
         if len(self._cache) >= 1000:
             for k in list(self._cache)[:500]:
                 del self._cache[k]
-        if not (llm_failed and getattr(self, "retail_mode", False) and getattr(self, "routing_mode", "keyword") == "dag"):
+        if task_compiler is None and not (llm_failed and getattr(self, "retail_mode", False) and getattr(self, "routing_mode", "keyword") == "dag"):
             self._cache[key] = result
         return result
 
@@ -478,6 +484,7 @@ class IntentRecognizer:
         self,
         message: str,
         history: Optional[List[Dict[str, str]]],
+        *, task_compiler=None,
     ) -> Dict[str, Any]:
         """信号 1：结合少样本示例和上下文的 LLM 语义理解。"""
         message = self._clean_text(message)
@@ -491,6 +498,9 @@ class IntentRecognizer:
         last_kind = "request_error"
         attempts: List[Dict[str, Any]] = []
         dag = getattr(self, "retail_mode", False) and getattr(self, "routing_mode", "keyword") == "dag"
+        if dag and task_compiler:
+            prompt += ("\nFor an explicit reference such as 'that order', 'that product' or 'that variant', "
+                       "keep the original quote and use an empty target. The server resolves or asks.")
         messages = [{"role": "user", "content": prompt}]
         # 普通请求／解析错误有限重试；硬预算与截断停止由评测守卫向上抛出。
         for attempt in range(2):
@@ -507,7 +517,7 @@ class IntentRecognizer:
                 if dag:
                     from core.dag_planning import PlanError, parse_plan
                     try:
-                        data = parse_plan(raw, message)
+                        data = parse_plan(raw, message, task_compiler=task_compiler)
                     except PlanError as error:
                         last_kind, last_error = error.stage, error
                         attempts.append({"attempt": attempt + 1, "status": error.stage, "errors": error.issues})

@@ -439,6 +439,7 @@ class RetailRuntimeConfig:
     # 小样本漏做写操作减半、安全不退步，成本约增一成半，默认开启。
     request_plan: bool = True
     routing_mode: str = DEFAULT_RETAIL_ROUTING_MODE
+    task_context_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "RetailRuntimeConfig":
@@ -562,6 +563,7 @@ class RetailRuntimeConfig:
             semantic_routing=_env_bool("RETAIL_SEMANTIC_ROUTING", True),
             semantic_model_path=_env_optional_path("RETAIL_SEMANTIC_MODEL_PATH"),
             model_thinking=_env_text("RETAIL_MODEL_THINKING").lower(),
+            task_context_enabled=_env_bool("RETAIL_TASK_CONTEXT_ENABLED", False),
             context_mode=_env_text("RETAIL_CONTEXT_MODE", "compiled").lower(),
             skill_mode=_env_text("RETAIL_SKILL_MODE", "on_demand").lower(),
             task_facts=_env_bool("RETAIL_TASK_FACTS", False),
@@ -1019,6 +1021,7 @@ def _build_retail_runtime(config: RetailRuntimeConfig, encoder) -> RetailRuntime
         confirmation_client=client.for_stage("confirm", count_turn=True),
         confirmation_model=config.model,
         context_engine=context_engine,
+        task_context_enabled=config.task_context_enabled,
         skill_library=skill_library,
         fact_client=(client.for_stage("extract", count_turn=True)
                      if config.task_facts and config.context_mode == "compiled" else None),

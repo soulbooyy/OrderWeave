@@ -173,17 +173,20 @@ class RetailRoleMixin:
             allowed.intersection_update(TASK_TOOLS.get(req.dag_assignment.get("kind"), ()))
         if req.dag_tool_limit is not None:
             allowed &= req.dag_tool_limit
-        return {
-            name: spec
-            for name, spec in self.get_tools().items()
-            if name in allowed
-        }
+        effective = {name: spec for name, spec in self.get_tools().items() if name in allowed}
+        if req.task_compiler and req.dag_assignment is not None:
+            return {name: effective[name] for name in sorted(effective)}
+        return effective
 
     def _loop_hooks(self, req: Request):
         return role_hooks()
 
     def _build_system_prompt(self, req: Request) -> str:
         prompt = super()._build_system_prompt(req)
+        if req.task_compiler and req.dag_assignment is not None:
+            duty = ("Execute only the assigned task. Server authorization applies." if self.language == "en"
+                    else "仅执行所分派的任务。业务授权以服务端核验为准。")
+            return f"{prompt}\n\n{duty}"
         if req.dag_assignment is not None or req.dag_tool_limit is not None:
             return f"{prompt}\n\n{self._task_duty(req)}"
         return prompt
