@@ -56,3 +56,23 @@ def test_correct_wait_requires_display_then_later_exactly_one_business_event():
     for key, value in [("events", []), ("events", [event, event]), ("waiting", []),
                        ("events", [{**event, "turn": 1}]), ("events", [{**event, "item": "other"}])]:
         assert not score(case, calls, **{**args, key: value})["success"]
+
+
+def test_offline_runner_records_real_user_reply_and_tool_evidence(tmp_path):
+    import asyncio
+    import json
+    from unittest.mock import patch
+    from core.retail_subtasks import OWNERS
+    from evaluation.harness.config import SEED_PATH
+    from evaluation.harness.dag_ablation import run_case
+    from evaluation.harness.dag_cases import Case, Gold
+
+    if not SEED_PATH.is_file():
+        pytest.skip("retail seed unavailable")
+    message = "Check the color of variant 5253880258"
+    case = Case("smoke", message, "#W9549057", (
+        Gold("t1", "product_info", message, "5253880258", "color", "black"),), (r"color.{0,12}black",))
+    with patch.dict(OWNERS, {"order_lookup": "billing"}):
+        row = asyncio.run(run_case(case, "dag", 1, tmp_path, SEED_PATH, json.loads(SEED_PATH.read_text())))
+    assert row["grade"]["success"] and row["requests"] == {"classifier": 1, "role": 2}
+    assert row["calls"][0]["id"] == "t1" and row["latency_ms"][0] > 0

@@ -170,3 +170,39 @@ def test_turn_streams_nodes_model_tool_and_db_change(tmp_path):
         replay = client.get(f"/api/web/replays/recorded/{created['id']}").text.splitlines()
         assert json.loads(replay[0])["type"] == "session" and len(replay) == len(events) + 1
         assert client.get(f"/api/web/sessions/{created['id']}/snapshots").json()["turns"] == [0, 1]
+
+
+def test_dag_stream_and_recording_show_task_ids_without_raw_order_or_confirmation_data(tmp_path):
+    from agents.agent_orchestrator import AgentOrchestrator
+    from agents.retail_multi_agent import RetailMultiAgent
+    from agents.retail_tools import retail_tools
+    from core.intent_recognizer import IntentRecognizer
+    from evaluation.harness.dag_script import Script, role_classes
+
+    async def factory(folder, mode, language):
+        store = RetailStore(folder / "retail.sqlite", _seed(), language="en")
+        script = Script("dag")
+        router = AgentOrchestrator(client=script, model="offline", language="en", retail_mode=True,
+                                   routing_mode="dag", retail_role_classes=role_classes(),
+                                   intent_recognizer=IntentRecognizer(model="offline", client=script, language="en"))
+        router.set_shared_tools(retail_tools(store, language="en"))
+        service = RetailService(store, RetailMultiAgent(router, language="en"), workflow_mode="langgraph", language="en")
+        return SimpleNamespace(service=service, ledger=SimpleNamespace(summary=lambda: {"spent_cny": 0}),
+                               close=service.workflow.close)
+
+    manager = web_console.SessionManager(tmp_path / "sessions", runtime_factory=factory)
+    with TestClient(web_console.create_app(manager)) as client:
+        sid = client.post("/api/web/sessions", json={"mode": "multi", "language": "en"}).json()["id"]
+        session = manager.get(sid)
+        seed = json.loads(_seed().read_text())
+        uid = seed["orders"]["#W9549057"]["user_id"]
+        session.runtime.service.store.find_user_by_email(session.client_id, session.conv_id, seed["users"][uid]["email"])
+        message = "Count the items in order #W9549057. Then check the size of variant 5253880258."
+        with client.stream("POST", f"/api/web/sessions/{sid}/turns", json={"message": message}) as stream:
+            events = [json.loads(line[6:]) for line in stream.iter_lines() if line.startswith("data: ")]
+        public = events[-1]
+        assert public["orchestration_mode"] == "dag" and public["turn_status"] == "completed"
+        assert [row["id"] for row in public["task_runs"]] == ["t1", "t2"]
+        replay = client.get(f"/api/web/replays/recorded/{sid}").text
+        assert "payment_history" not in replay and seed["users"][uid]["email"] not in replay
+        assert json.loads(replay.splitlines()[-1])["task_runs"] == public["task_runs"]
