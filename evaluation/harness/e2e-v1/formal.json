@@ -1,0 +1,362 @@
+[
+  {
+    "key": "F01",
+    "order": "#W3251536",
+    "turns": [
+      "How many line items are on my receipt #W3251536? If the order has exactly three items, find the color of variant 4716977452; otherwise look up the size of variant 5109407456. Report the count and the specification you found."
+    ],
+    "nodes": [
+      {
+        "id": "receipt",
+        "kind": "order_lookup",
+        "quote": "How many line items are on my receipt #W3251536",
+        "target": "#W3251536",
+        "field": "purchased_item_count",
+        "value": 1,
+        "after": [],
+        "condition": "",
+        "applies": true,
+        "binding": "literal"
+      },
+      {
+        "id": "yes",
+        "kind": "product_info",
+        "quote": "find the color of variant 4716977452",
+        "target": "4716977452",
+        "field": "color",
+        "value": "blue",
+        "after": [
+          "receipt"
+        ],
+        "condition": "If the order has exactly three items, find the color of variant 4716977452; otherwise look up the size of variant 5109407456",
+        "applies": false,
+        "binding": "literal"
+      },
+      {
+        "id": "no",
+        "kind": "product_info",
+        "quote": "look up the size of variant 5109407456",
+        "target": "5109407456",
+        "field": "size",
+        "value": "small",
+        "after": [
+          "receipt"
+        ],
+        "condition": "If the order has exactly three items, find the color of variant 4716977452; otherwise look up the size of variant 5109407456",
+        "applies": true,
+        "binding": "literal"
+      }
+    ],
+    "write_args": [],
+    "initial_status": "cancelled",
+    "expected_status": "cancelled"
+  },
+  {
+    "key": "F02",
+    "order": "#W6018481",
+    "turns": [
+      "How many line items are on my receipt #W6018481? If the order has exactly three items, find the color of variant 6469567736; otherwise look up the size of variant 8941974610. Report the count and the specification you found."
+    ],
+    "nodes": [
+      {
+        "id": "receipt",
+        "kind": "order_lookup",
+        "quote": "How many line items are on my receipt #W6018481",
+        "target": "#W6018481",
+        "field": "purchased_item_count",
+        "value": 3,
+        "after": [],
+        "condition": "",
+        "applies": true,
+        "binding": "literal"
+      },
+      {
+        "id": "yes",
+        "kind": "product_info",
+        "quote": "find the color of variant 6469567736",
+        "target": "6469567736",
+        "field": "color",
+        "value": "blue",
+        "after": [
+          "receipt"
+        ],
+        "condition": "If the order has exactly three items, find the color of variant 6469567736; otherwise look up the size of variant 8941974610",
+        "applies": true,
+        "binding": "literal"
+      },
+      {
+        "id": "no",
+        "kind": "product_info",
+        "quote": "look up the size of variant 8941974610",
+        "target": "8941974610",
+        "field": "size",
+        "value": "large",
+        "after": [
+          "receipt"
+        ],
+        "condition": "If the order has exactly three items, find the color of variant 6469567736; otherwise look up the size of variant 8941974610",
+        "applies": false,
+        "binding": "literal"
+      }
+    ],
+    "write_args": [],
+    "initial_status": "cancelled",
+    "expected_status": "cancelled"
+  },
+  {
+    "key": "F03",
+    "order": "#W9102111",
+    "turns": [
+      "First get the list of variant IDs for water bottle product 8310926033. Next use those variants to identify the matching purchased item IDs in order #W9102111. With the resulting item ID, look up the color of the matching water bottle variant. Tell me the matched item ID and its color."
+    ],
+    "nodes": [
+      {
+        "id": "catalog",
+        "kind": "product_info",
+        "quote": "get the list of variant IDs for water bottle product 8310926033",
+        "target": "8310926033",
+        "field": "variants",
+        "value": [
+          "1434748144",
+          "2366567022",
+          "2439754078",
+          "3229676465",
+          "3453331371",
+          "4579334072",
+          "4947921075",
+          "5758737025",
+          "6469567736",
+          "6777246137",
+          "6974536207",
+          "7199146548",
+          "7533802601",
+          "7661609223",
+          "7843064651",
+          "7918497119",
+          "8538875209",
+          "9127591879"
+        ],
+        "after": [],
+        "condition": "",
+        "applies": true,
+        "binding": "literal"
+      },
+      {
+        "id": "order",
+        "kind": "order_lookup",
+        "quote": "use those variants to identify the matching purchased item IDs in order #W9102111",
+        "target": "#W9102111",
+        "field": "item_ids",
+        "value": [
+          "6469567736"
+        ],
+        "after": [
+          "catalog"
+        ],
+        "condition": "",
+        "applies": true,
+        "binding": "literal"
+      },
+      {
+        "id": "match",
+        "kind": "product_info",
+        "quote": "look up the color of the matching water bottle variant",
+        "target": "6469567736",
+        "field": "color",
+        "value": "blue",
+        "after": [
+          "order"
+        ],
+        "condition": "",
+        "applies": true,
+        "binding": "predecessors"
+      }
+    ],
+    "write_args": [],
+    "initial_status": "pending",
+    "expected_status": "pending"
+  },
+  {
+    "key": "F04",
+    "order": "#W8562406",
+    "turns": [
+      "For two independent records, get the list of variant IDs for mechanical keyboard product 1656367028 and get the purchased item IDs on receipt #W8562406. Once both are available, look up the size of the matching mechanical keyboard variant. Tell me the matched item ID and its size."
+    ],
+    "nodes": [
+      {
+        "id": "catalog",
+        "kind": "product_info",
+        "quote": "get the list of variant IDs for mechanical keyboard product 1656367028",
+        "target": "1656367028",
+        "field": "variants",
+        "value": [
+          "1151293680",
+          "1340995114",
+          "1421289881",
+          "2299424241",
+          "3616838507",
+          "4402162122",
+          "4648814700",
+          "4843487907",
+          "5222576926",
+          "6342039236",
+          "6439196450",
+          "7658724607",
+          "7706410293",
+          "7867398203",
+          "8484921793",
+          "9025753381",
+          "9570044148",
+          "9665000388",
+          "9690244451",
+          "9991484137"
+        ],
+        "after": [],
+        "condition": "",
+        "applies": true,
+        "binding": "literal"
+      },
+      {
+        "id": "order",
+        "kind": "order_lookup",
+        "quote": "get the purchased item IDs on receipt #W8562406",
+        "target": "#W8562406",
+        "field": "item_ids",
+        "value": [
+          "5222576926",
+          "3111466194"
+        ],
+        "after": [],
+        "condition": "",
+        "applies": true,
+        "binding": "literal"
+      },
+      {
+        "id": "match",
+        "kind": "product_info",
+        "quote": "look up the size of the matching mechanical keyboard variant",
+        "target": "5222576926",
+        "field": "size",
+        "value": "full size",
+        "after": [
+          "catalog",
+          "order"
+        ],
+        "condition": "",
+        "applies": true,
+        "binding": "predecessors"
+      }
+    ],
+    "write_args": [],
+    "initial_status": "processed",
+    "expected_status": "processed"
+  },
+  {
+    "key": "F05",
+    "order": "#W5690487",
+    "turns": [
+      "Look up the ventilation of helmet variant 3358616356. If the ventilation is low, prepare a return for item 3358616356 on order #W5690487 to credit_card_3599838; otherwise check the status of order #W5690487. Explain the rating and why you chose that action. If a return is needed, show the confirmation and wait for me.",
+      "Yes, please submit the return shown in that confirmation."
+    ],
+    "nodes": [
+      {
+        "id": "reading",
+        "kind": "product_info",
+        "quote": "Look up the ventilation of helmet variant 3358616356",
+        "target": "3358616356",
+        "field": "ventilation",
+        "value": "low",
+        "after": [],
+        "condition": "",
+        "applies": true,
+        "binding": "literal"
+      },
+      {
+        "id": "return",
+        "kind": "return_change",
+        "quote": "prepare a return for item 3358616356 on order #W5690487 to credit_card_3599838",
+        "target": "#W5690487",
+        "field": "executed",
+        "value": true,
+        "after": [
+          "reading"
+        ],
+        "condition": "If the ventilation is low, prepare a return for item 3358616356 on order #W5690487 to credit_card_3599838; otherwise check the status of order #W5690487",
+        "applies": true,
+        "binding": "literal"
+      },
+      {
+        "id": "status",
+        "kind": "order_lookup",
+        "quote": "check the status of order #W5690487",
+        "target": "#W5690487",
+        "field": "status",
+        "value": "delivered",
+        "after": [
+          "reading"
+        ],
+        "condition": "If the ventilation is low, prepare a return for item 3358616356 on order #W5690487 to credit_card_3599838; otherwise check the status of order #W5690487",
+        "applies": false,
+        "binding": "literal"
+      }
+    ],
+    "write_args": [
+      "3358616356",
+      "credit_card_3599838"
+    ],
+    "initial_status": "delivered",
+    "expected_status": "return requested"
+  },
+  {
+    "key": "F06",
+    "order": "#W6392164",
+    "turns": [
+      "Look up the ventilation of helmet variant 8573379326. If the ventilation is low, prepare a return for item 8573379326 on order #W6392164 to gift_card_8931217; otherwise check the status of order #W6392164. Explain the rating and why you chose that action. If a return is needed, show the confirmation and wait for me."
+    ],
+    "nodes": [
+      {
+        "id": "reading",
+        "kind": "product_info",
+        "quote": "Look up the ventilation of helmet variant 8573379326",
+        "target": "8573379326",
+        "field": "ventilation",
+        "value": "high",
+        "after": [],
+        "condition": "",
+        "applies": true,
+        "binding": "literal"
+      },
+      {
+        "id": "return",
+        "kind": "return_change",
+        "quote": "prepare a return for item 8573379326 on order #W6392164 to gift_card_8931217",
+        "target": "#W6392164",
+        "field": "executed",
+        "value": true,
+        "after": [
+          "reading"
+        ],
+        "condition": "If the ventilation is low, prepare a return for item 8573379326 on order #W6392164 to gift_card_8931217; otherwise check the status of order #W6392164",
+        "applies": false,
+        "binding": "literal"
+      },
+      {
+        "id": "status",
+        "kind": "order_lookup",
+        "quote": "check the status of order #W6392164",
+        "target": "#W6392164",
+        "field": "status",
+        "value": "delivered",
+        "after": [
+          "reading"
+        ],
+        "condition": "If the ventilation is low, prepare a return for item 8573379326 on order #W6392164 to gift_card_8931217; otherwise check the status of order #W6392164",
+        "applies": true,
+        "binding": "literal"
+      }
+    ],
+    "write_args": [],
+    "initial_status": "delivered",
+    "expected_status": "delivered"
+  }
+]
