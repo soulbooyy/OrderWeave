@@ -703,6 +703,11 @@ class RetailStore:
     def _create_schema(connection: sqlite3.Connection) -> None:
         connection.executescript(
             """
+            CREATE TABLE IF NOT EXISTS dag_executions (
+                plan_id TEXT PRIMARY KEY, client TEXT NOT NULL, conversation TEXT NOT NULL,
+                revision INTEGER NOT NULL, active INTEGER NOT NULL, payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS dag_session ON dag_executions(client,conversation,active);
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -1651,6 +1656,40 @@ class RetailStore:
                 "目前尚未做任何修改。请明确回复“确认，按这些办理”以按上述详情执行。")
         return "\n".join(head + lines + [tail])
 
+    def save_dag(self, state):
+        plan = state.plan
+        revision = state.revision + 1
+        active = bool(state.stop in {"identity_required", "choose_target", "confirmation", "unknown_result"}
+                      or (not state.stop and any(r.status.value in {"pending", "ready", "running"}
+                                                 for r in state.runs.values())))
+        payload = json.dumps({**state.dump(), "revision": revision}, ensure_ascii=False)
+        with self._tx() as connection:
+            if state.revision == 0:
+                connection.execute("INSERT INTO dag_executions VALUES (?,?,?,?,?,?)",
+                                   (plan.id, plan.client, plan.conversation, revision, active, payload))
+            else:
+                changed = connection.execute(
+                    "UPDATE dag_executions SET revision=?,active=?,payload=? "
+                    "WHERE plan_id=? AND revision=? AND client=? AND conversation=?",
+                    (revision,active,payload,plan.id,state.revision,plan.client,plan.conversation))
+                if changed.rowcount != 1:
+                    raise RetailStoreError("concurrent DAG update")
+        state.revision = revision
+
+    def open_dags(self, client, conversation):
+        from core.retail_scheduler import Execution
+        with closing(self._connect()) as connection:
+            rows = connection.execute("SELECT payload FROM dag_executions WHERE "
+                                      "client=? AND conversation=? AND active=1 ORDER BY rowid DESC",
+                                      (client,conversation)).fetchall()
+        return [Execution.load(json.loads(row[0])) for row in rows]
+
+    def cancel_dag_operation(self, client, conversation, op_id):
+        with self._tx() as connection:
+            connection.execute("UPDATE pending_actions SET status='cancelled', note='dag_cancelled' "
+                               "WHERE op_id=? AND client_user_id=? AND conv_id=? AND status IN ('prepared','displayed')",
+                               (op_id, client, conversation))
+
     def active_pending(self, client_user_id: str, conv_id: str) -> List[Dict[str, Any]]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
@@ -1730,7 +1769,7 @@ class RetailStore:
         return dict(row) if row else None
 
     def write_action(self, client_user_id: str, conv_id: str, tool_name: str, raw_args: Dict[str, Any],
-                     user_message: str, *, allow_execute: bool = True) -> Dict[str, Any]:
+                     user_message: str, *, allow_execute: bool = True, expected_op_id: str = "") -> Dict[str, Any]:
         """写工具统一入口：首次调用生成待确认详情；展示后经本轮确认、参数一致的再次调用才执行。"""
         kind = WRITE_KINDS[tool_name]
         turn = self.current_turn(client_user_id, conv_id)
@@ -1748,6 +1787,8 @@ class RetailStore:
                     (client_user_id, conv_id, kind, args_json)).fetchone()
         except (RetailStoreError, DomainError) as ex:
             return {"success": False, "error": str(ex)}
+        if expected_op_id and (displayed is None or displayed["op_id"] != expected_op_id):
+            return {"success": False, "error": "pending operation changed"}
         if displayed is not None and allow_execute and int(displayed["displayed_turn"] or turn) < turn:
             return self._execute_action(client_user_id, conv_id, kind, dict(displayed), user_message, turn)
         return self._prepare_action(client_user_id, conv_id, kind, args, turn)

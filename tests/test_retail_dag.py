@@ -131,7 +131,11 @@ def test_real_entry_point_never_discards_explicit_condition():
         app = router("dag", rows)
         result = asyncio.run(app.run(Request(COUNT_QUERY, "client", "conv")))
         assert not result.success and not result.tool_traces
-        assert result.routing_reason.startswith("dag_contract:")
+        if "expr" in guard:
+            assert result.routing_reason.startswith("dag_contract:")
+        else:
+            assert result.routing_reason == "dag_tasks"
+            assert "邮箱" in result.response
         assert all(agent._client.calls == 0 for pool in app._pool.values() for agent in pool)
 
 

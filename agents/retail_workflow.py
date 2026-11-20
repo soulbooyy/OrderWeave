@@ -19,6 +19,7 @@ from langgraph.types import Command, interrupt
 from langsmith import tracing_context
 
 from agents.agent_orchestrator import AgentResponse, AgentType, OrchestratorResult
+from agents.retail_dag_runner import DagRunner
 from agents.retail_handoff import RoleHandoff, RoleOutcome, build_role_handoff, role_outcome
 from agents.retail_support import analyze_message
 from mcp_tools.retail_store import evaluate_confirmation
@@ -26,6 +27,7 @@ from monitor import live_events
 
 
 class RetailGraphState(TypedDict, total=False):
+    plan_id: str
     current_task: str
     phase: str
     waiting_reason: str
@@ -58,7 +60,7 @@ class RetailWorkflow:
     def config(self, client_user_id, conv_id):
         # 包含业务库边界，不能由外部传入任意 checkpoint id。
         identity = json.dumps([str(self.service.store.db_path), client_user_id, conv_id], ensure_ascii=False)
-        return {"configurable": {"thread_id": hashlib.sha256(identity.encode()).hexdigest()}}
+        return {"recursion_limit": 40, "configurable": {"thread_id": hashlib.sha256(identity.encode()).hexdigest()}}
 
     async def start(self):
         async with self._start_lock:
@@ -137,7 +139,12 @@ class RetailWorkflow:
         started = time.perf_counter()
         call["agent_started"] = agent.begin_turn(req)
         try:
-            prepared = await agent.orchestrator.prepare_route(req)
+            prepared = await agent.orchestrator.prepare_route(req, schedule=True)
+            if isinstance(prepared, DagRunner):
+                call["dag"] = prepared
+                role = prepared.next_role()
+                return self._step(state, "select_role", next_role=role or "compose_roles",
+                                  plan_id=prepared.state.plan.id, phase="dag_routed")
             if isinstance(prepared, OrchestratorResult):
                 call["response"] = agent.finish_turn(req, prepared, call["agent_started"])
                 return self._step(state, "select_role", next_role="update_result")
@@ -160,6 +167,9 @@ class RetailWorkflow:
     async def _run_role(self, state, *, role):
         call = self._call.get()
         req = call["context"]["request"]
+        if "dag" in call:
+            await call["dag"].execute()
+            return self._step(state, role, active_role=role, phase="dag_executed")
         handoff = build_role_handoff(self.service.store, req, call.get("previous_role_result"), role)
         req.retail_handoff = handoff
         call.setdefault("handoffs", []).append({key: handoff[key] for key in
@@ -184,6 +194,9 @@ class RetailWorkflow:
 
     async def _handoff_role(self, state):
         call = self._call.get()
+        if "dag" in call:
+            role = call["dag"].next_role()
+            return self._step(state, "handoff_role", next_role=role or "compose_roles")
         if call.get("role_error"):
             return self._step(state, "handoff_role", next_role="update_result", role_queue=[])
         req = call["context"]["request"]
@@ -191,7 +204,7 @@ class RetailWorkflow:
         response = call["role_response"]
         if call.get("failed_response") is not None:
             response = orchestrator.merge_fallback(call.pop("failed_response"), response)
-        elif not req.catalog_followup and orchestrator.should_fallback(req, AgentType(state["active_role"]), response) and orchestrator._best_agent(AgentType.GENERAL):
+        elif orchestrator.should_fallback(req, AgentType(state["active_role"]), response) and orchestrator._best_agent(AgentType.GENERAL):
             call["failed_response"] = response
             return self._step(state, "handoff_role", next_role="general", phase="role_fallback")
         if len(call["responses"]) < len(call["supporting"]) and getattr(orchestrator, "retail_support_enabled", False):
@@ -200,8 +213,6 @@ class RetailWorkflow:
                 call["decision"].primary_agent.value, req.turn, response)
         call["responses"].append(response)
         queue = state["role_queue"][1:]
-        if not queue and orchestrator.activate_catalog_followup(req, call["decision"], response):
-            queue = ["technical"]
         return self._step(state, "handoff_role", role_queue=queue,
                           next_role=queue[0] if queue else "compose_roles", phase="role_handoff")
 
@@ -209,14 +220,14 @@ class RetailWorkflow:
         call = self._call.get()
         agent = self.service.agent
         req = call["context"]["request"]
+        if "dag" in call:
+            call["response"] = agent.finish_turn(req, call["dag"].finish(), call["agent_started"])
+            return self._step(state, "compose_roles", phase="executed")
         decision = call["decision"]
         responses = call["responses"]
         started = time.perf_counter()
         try:
-            if req.catalog_followup:
-                result = await agent.orchestrator.finish_catalog_followup(
-                    req, decision, responses[0], responses[1], call["agent_started"])
-            elif decision.multi_agent:
+            if decision.multi_agent:
                 result = await agent.orchestrator.finish_parallel(req, decision, responses,
                     [responses[-1]] + responses[:-1], responses[-1], call["agent_started"])
             else:

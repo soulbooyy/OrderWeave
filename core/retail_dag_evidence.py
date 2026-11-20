@@ -42,8 +42,8 @@ def _catalog_value(field, name, args, result, target):
         item = result.get("item") or {}
     else:
         return None
-    if item.get("item_id") == target and field in {"ventilation", "size", "color"}:
-        value = (item.get("options") or {}).get(field)
+    if item.get("item_id") == target and field in {"ventilation", "sensor_type", "size", "color"}:
+        value = (item.get("options") or {}).get(field.replace("_", " "))
         return value if isinstance(value, str) and value.strip() else None
     return None
 

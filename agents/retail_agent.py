@@ -607,6 +607,7 @@ class RetailService:
             context=context_text,
             turn=turn,
             retail_user_id=bound_user_id,
+            retail_store=self.store,
             retail_pending=pending_brief,
             retail_support=support_packet,
             retail_support_enabled=self.support_enabled,

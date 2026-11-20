@@ -287,6 +287,15 @@ def retail_tools(
 
     def write_handler(name: str):
         def handler(req: Any, args: Dict[str, Any]) -> Dict[str, Any]:
+            task = getattr(req, "dag_assignment", None)
+            if task is not None:
+                op = task.get("operation") or {}
+                target = args.get("order_id") if name != "modify_user_address" else req.retail_user_id
+                if (name not in TASK_TOOLS[task["kind"]] or target != task["target"]
+                        or (op and (WRITE_KINDS[name] != op["kind"] or canonical_args(op["kind"], args) != op["args"]))):
+                    return {"success": False, "error": "action outside the assigned task"}
+                return store.write_action(req.user_id, req.conv_id, name, dict(args), req.message,
+                                          allow_execute=bool(op), expected_op_id=op.get("op_id", ""))
             return store.write_action(req.user_id, req.conv_id, name, dict(args), req.message)
         return handler
 

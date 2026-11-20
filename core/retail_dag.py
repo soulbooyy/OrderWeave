@@ -23,7 +23,7 @@ class Status(str, Enum):
 
 _TRANSITIONS = {
     Status.PENDING: {Status.READY, Status.BLOCKED, Status.SKIPPED},
-    Status.READY: {Status.BLOCKED},
+    Status.READY: {Status.BLOCKED, Status.WAITING_USER},
     Status.RUNNING: {Status.SUCCEEDED, Status.FAILED, Status.BLOCKED, Status.WAITING_USER},
     Status.BLOCKED: {Status.PENDING, Status.SKIPPED},
     Status.WAITING_USER: {Status.READY, Status.BLOCKED},
@@ -33,8 +33,8 @@ _TRANSITIONS = {
 # Only server-defined fields may cross a dependency edge.
 OUTPUTS = {
     "order_lookup": {"order_id", "status", "purchased_item_count", "item_ids"},
-    "billing_lookup": {"order_id", "status", "purchased_item_count", "payment_type"},
-    "product_info": {"variants", "ventilation", "size", "color"},
+    "billing_lookup": {"order_id", "status", "purchased_item_count", "payment_type", "item_ids"},
+    "product_info": {"variants", "ventilation", "sensor_type", "size", "color"},
     "return_policy": {"policy"}, "general_policy": {"policy"},
     "return_change": {"executed"}, "order_change": {"executed"},
 }
@@ -43,8 +43,8 @@ _COMPARISONS = {"至少": operator.ge, "超过": operator.gt, "少于": operator
                 "more than": operator.gt, "fewer than": operator.lt, "at most": operator.le,
                 "exactly": operator.eq, "is": operator.eq}
 _COUNT = re.compile(r"(?:订单(?:中)?(?P<zh>至少|至多|超过|少于|等于)(?:有)?\s*(?P<n>[0-9]{1,6})\s*件商品"
-                    r"|(?:the )?order (?:has|contains) (?P<en>at least|more than|fewer than|at most|exactly) "
-                    r"(?P<m>[0-9]{1,6}) (?:items?|products?))", re.I)
+                    r"|(?:(?:the )?order (?:has|contains)|there are) (?P<en>at least|more than|fewer than|at most|exactly) "
+                    r"(?P<m>[0-9]{1,6}|one|two|three|four|five|six|seven|eight|nine|ten) (?:purchased )?(?:items?|products?))", re.I)
 _VENTILATION = re.compile(r"(?:通风等级(?:为|是)|(?:the )?ventilation(?: level)? is )"
                           r"(low|medium|high|低|中|高)", re.I)
 
@@ -83,7 +83,7 @@ def _condition(raw, task, message, sources):
         raise ValueError("invalid_condition_source")
     # Require a full user-authored conditional sentence. The model cannot pick an
     # operator, constant, or branch polarity by merely citing part of a sentence.
-    sentences = [part.strip() for part in re.split(r"[。！？.!?\n]+", message)]
+    sentences = [part.strip() for part in re.split(r"[。！？.!?:：\n]+", message)]
     if sentences.count(quote.rstrip("。！？.!?")) != 1:
         raise ValueError("unverified_condition_quote")
     match = re.fullmatch(r"(?:如果|if )(.+?)[，,]\s*(?:就|then )?(.+?)"
@@ -98,7 +98,9 @@ def _condition(raw, task, message, sources):
     if count:
         field = "purchased_item_count"
         comparison = (count["zh"] or count["en"]).lower()
-        value = int(count["n"] or count["m"])
+        word = (count["n"] or count["m"]).lower()
+        numbers = "zero one two three four five six seven eight nine ten".split()
+        value = int(word) if word.isdecimal() else numbers.index(word)
     elif vent:
         field, comparison = "ventilation", "is"
         value = {"低": "low", "中": "medium", "高": "high"}.get(vent[1], vent[1].lower())
@@ -174,3 +176,9 @@ class Run:
         self.status, self.reason = Status.RUNNING, ""
         self.turn, self.role = turn, role
         self.attempt += 1
+
+    def reconcile(self, op_id, event_id):
+        if self.status not in {Status.RUNNING, Status.BLOCKED} or not op_id or not event_id:
+            raise ValueError("invalid_reconciliation")
+        self.status, self.reason = Status.SUCCEEDED, ""
+        self.facts, self.refs = {"executed": True, "op_id": op_id}, (f"event:{event_id}",)
